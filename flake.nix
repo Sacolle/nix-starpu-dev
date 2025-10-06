@@ -17,9 +17,11 @@
         };
     in
     {
-        devShell = pkgs.mkShell {
+        devShells.${system}.default = pkgs.mkShell {
             buildInputs = with pkgs; [
+                pkg-config
                 StarPU
+                hwloc
             ];
         };
     };

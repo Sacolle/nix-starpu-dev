@@ -27,6 +27,11 @@ stdenv.mkDerivation (finalAttrs: {
     pname = "StarPU";
     system = "x86_64-linux";
     version = "1.4.7";
+
+inherit enableSimgrid;
+inherit enableMPI;
+inherit enableCUDA;
+
     src = fetchurl {
         url = "http://files.inria.fr/starpu/starpu-${finalAttrs.version}/starpu-${finalAttrs.version}.tar.gz";
         hash = "sha256-HrPfVRCJFT/m4LFyrZURhDS0qB6p6qWiw4cl0NtTsT4=";
