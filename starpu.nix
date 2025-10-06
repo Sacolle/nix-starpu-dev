@@ -5,7 +5,7 @@
   stdenv,
   writableTmpDirAsHomeHook,
   autoreconfHook,
-
+  # from https://github.com/PhoqueEberlue/nixpkgs/blob/add-starpu/pkgs/by-name/st/starpu/package.nix
   # starpu dependencies
   hwloc,
   libuuid,
