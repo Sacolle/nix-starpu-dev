@@ -180,33 +180,39 @@ int main(int argc, char **argv){
             task->starpu_task->handles[0] = data_handles[BLOCK(i, j)];
             task->starpu_task->modes[0] = STARPU_RW;
 
-            int nbuffers = 1;
             //b1
             if(j == block_amounts_w - 1){
-                task->starpu_task->handles[nbuffers] = data_handles[BLOCK(i, j + 1)];
-                task->starpu_task->modes[nbuffers] = STARPU_R;
-                nbuffers++;
+                task->starpu_task->handles[1] = data_handles[BLOCK(i, j + 1)];
+                task->starpu_task->modes[1] = STARPU_R;
+            }else{
+                task->starpu_task->handles[1] = data_handles[BLOCK(i, j)];
+                task->starpu_task->modes[1] = STARPU_R;
             }
             //b2
             if(i == block_amounts_w - 1){
-                task->starpu_task->handles[nbuffers] = data_handles[BLOCK(i + 1, j)];
-                task->starpu_task->modes[nbuffers] = STARPU_R;
-                nbuffers++;
+                task->starpu_task->handles[2] = data_handles[BLOCK(i + 1, j)];
+                task->starpu_task->modes[2] = STARPU_R;
+            }else{
+                task->starpu_task->handles[2] = data_handles[BLOCK(i, j)];
+                task->starpu_task->modes[2] = STARPU_R;
             }
             //b3
             if(j == 0){
-                task->starpu_task->handles[nbuffers] = data_handles[BLOCK(i, j - 1)];
-                task->starpu_task->modes[nbuffers] = STARPU_R;
-                nbuffers++;
+                task->starpu_task->handles[3] = data_handles[BLOCK(i, j - 1)];
+                task->starpu_task->modes[3] = STARPU_R;
+            }else{
+                task->starpu_task->handles[3] = data_handles[BLOCK(i, j)];
+                task->starpu_task->modes[3] = STARPU_R;
             }
             //b4
             if(i == 0){
-                task->starpu_task->handles[nbuffers] = data_handles[BLOCK(i - 1, j)];
-                task->starpu_task->modes[nbuffers] = STARPU_R;
-                nbuffers++;
+                task->starpu_task->handles[4] = data_handles[BLOCK(i - 1, j)];
+                task->starpu_task->modes[4] = STARPU_R;
+            }else{
+                task->starpu_task->handles[4] = data_handles[BLOCK(i, j)];
+                task->starpu_task->modes[4] = STARPU_R;
             }
-
-            task->starpu_task->nbuffers = nbuffers;
+            task->starpu_task->nbuffers = 5;
 
 		}
 	}

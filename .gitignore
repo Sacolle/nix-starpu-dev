@@ -1,5 +1,6 @@
 pkg
 hello_world 
 vector_scal 
+main
 *.o
 

@@ -22,7 +22,13 @@
                 pkg-config
                 StarPU
                 hwloc
+                # for bash to work properlly inside vscode
+                bashInteractive
+                gdb
             ];
+            shellHook = ''
+              export SHELL=/run/current-system/sw/bin/bash
+            '';
         };
     };
 }
