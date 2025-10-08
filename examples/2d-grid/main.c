@@ -19,7 +19,7 @@ typedef struct task_with_args {
 void print_matrix(double* A, int n){
 	for (int j = 0; j < n; j++){
 		for (int i = 0; i < n; i++){
-			printf("%f, ", A[IDX(i, j)]);
+			printf("%0.1f, ", A[IDX(i, j)]);
 		}
 		printf("\n");
 	}
@@ -43,10 +43,9 @@ Enche a grid com os valores da borda como 0 e o centro como aleatórios
 void fill(double *A, int n, int border_size){
 	for (int j = 0; j < n; j++){
 		for (int i = 0; i < n; i++){
-            if (j < border_size || j > n - border_size) {
-                if (i < border_size || i > n - border_size) {
-                    A[IDX(i, j)] = 0.0;
-                }
+            if (j < border_size || j > n - 1 - border_size || i < border_size || i > n - 1 - border_size) {
+                A[IDX(i, j)] = 0.0;
+                continue;
             }
 			A[IDX(i, j)] = 10.0 * ((double) rand() / RAND_MAX);
 		}
@@ -114,6 +113,22 @@ struct starpu_codelet stencil5_cl =
 		.model = &starpu_perfmodel_nop,
 };
 
+struct starpu_codelet stencil4_cl =
+	{
+		.cpu_funcs = {stencil5_cpu},
+		.nbuffers = 4,
+		.modes = {STARPU_RW, STARPU_R, STARPU_R, STARPU_R},
+		.model = &starpu_perfmodel_nop,
+};
+
+struct starpu_codelet stencil3_cl =
+	{
+		.cpu_funcs = {stencil5_cpu},
+		.nbuffers = 3,
+		.modes = {STARPU_RW, STARPU_R, STARPU_R},
+		.model = &starpu_perfmodel_nop,
+};
+
 int main(int argc, char **argv){
 	int ret = starpu_init(NULL);
 	STARPU_CHECK_RETURN_VALUE(ret, "starpu_init");
@@ -174,51 +189,64 @@ int main(int argc, char **argv){
             //    b3
             // b4 b0 b2
             //    b1
-            task->starpu_task->cl = &stencil5_cl; 
 
             //b0
             task->starpu_task->handles[0] = data_handles[BLOCK(i, j)];
             task->starpu_task->modes[0] = STARPU_RW;
 
+            int nbuffers = 1;
             //b1
-            if(j == block_amounts_w - 1){
-                task->starpu_task->handles[1] = data_handles[BLOCK(i, j + 1)];
-                task->starpu_task->modes[1] = STARPU_R;
-            }else{
-                task->starpu_task->handles[1] = data_handles[BLOCK(i, j)];
-                task->starpu_task->modes[1] = STARPU_R;
+            if(j != block_amounts_w - 1){
+                task->starpu_task->handles[nbuffers] = data_handles[BLOCK(i, j + 1)];
+                task->starpu_task->modes[nbuffers] = STARPU_R;
+                nbuffers++;
             }
             //b2
-            if(i == block_amounts_w - 1){
-                task->starpu_task->handles[2] = data_handles[BLOCK(i + 1, j)];
-                task->starpu_task->modes[2] = STARPU_R;
-            }else{
-                task->starpu_task->handles[2] = data_handles[BLOCK(i, j)];
-                task->starpu_task->modes[2] = STARPU_R;
+            if(i != block_amounts_w - 1){
+                task->starpu_task->handles[nbuffers] = data_handles[BLOCK(i + 1, j)];
+                task->starpu_task->modes[nbuffers] = STARPU_R;
+                nbuffers++;
             }
             //b3
-            if(j == 0){
-                task->starpu_task->handles[3] = data_handles[BLOCK(i, j - 1)];
-                task->starpu_task->modes[3] = STARPU_R;
-            }else{
-                task->starpu_task->handles[3] = data_handles[BLOCK(i, j)];
-                task->starpu_task->modes[3] = STARPU_R;
+            if(j != 0){
+                task->starpu_task->handles[nbuffers] = data_handles[BLOCK(i, j - 1)];
+                task->starpu_task->modes[nbuffers] = STARPU_R;
+                nbuffers++;
             }
             //b4
-            if(i == 0){
-                task->starpu_task->handles[4] = data_handles[BLOCK(i - 1, j)];
-                task->starpu_task->modes[4] = STARPU_R;
-            }else{
-                task->starpu_task->handles[4] = data_handles[BLOCK(i, j)];
-                task->starpu_task->modes[4] = STARPU_R;
+            if(i != 0){
+                task->starpu_task->handles[nbuffers] = data_handles[BLOCK(i - 1, j)];
+                task->starpu_task->modes[nbuffers] = STARPU_R;
+                nbuffers++;
+            } 
+            task->starpu_task->nbuffers = nbuffers;
+
+            switch (nbuffers) {
+            case 5:
+                task->starpu_task->cl = &stencil5_cl; 
+                break;
+            case 4:
+                task->starpu_task->cl = &stencil4_cl; 
+                break;
+            case 3:
+                task->starpu_task->cl = &stencil3_cl; 
+                break;
+            
+            default:
+                printf("ERRO: numero de buffers errado");
+                exit(1);
+                break;
             }
-            task->starpu_task->nbuffers = 5;
+
+            ret = starpu_task_submit(task->starpu_task);
+            printf("ret: %d\n", ret);
+            STARPU_CHECK_RETURN_VALUE(ret, "starpu_task_submit");
 
 		}
 	}
 
     //
-
+    /*
     while(iterations--){
         for (int j = 0; j < block_amounts_w; j++) {
             for (int i = 0; i < block_amounts_w; i++) {
@@ -228,7 +256,7 @@ int main(int argc, char **argv){
             }
         }
         starpu_task_wait_for_all();
-    }
+    }*/
 
     //desregistra os blocos e limpa as tasks
 	for (int j = 0; j < block_amounts_w; j++) {
