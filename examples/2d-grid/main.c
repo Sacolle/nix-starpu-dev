@@ -1,6 +1,6 @@
 #include <starpu.h>
 #define IDX(i, j) (i + j*n)
-#define BLOCK(i, j) (i + j * block_amounts_w)
+#define BLOCK(i, j) ((i) + ((j) * block_amounts_w))
 #define SQ(x) ((x)*(x))
 
 struct params {
@@ -154,11 +154,15 @@ int main(int argc, char **argv){
     //regitra os blocos
 	for (int j = 0; j < block_amounts_w; j++) {
         for (int i = 0; i < block_amounts_w; i++) {
+            const int block_idx = BLOCK(i, j);
+            const int block_area = SQ(block_size);
+            const int start_idx_of_block = block_idx * block_area;
+
 			starpu_vector_data_register(
-				&data_handles[BLOCK(i, j)],
+				&data_handles[block_idx],
 				STARPU_MAIN_RAM,
-				(uintptr_t) &(grid[BLOCK(i, j) * SQ(block_size)]), 
-                SQ(block_size),
+				(uintptr_t) &(grid[start_idx_of_block]), 
+                block_area,
 				sizeof(double)
 			);
 		}
@@ -189,7 +193,6 @@ int main(int argc, char **argv){
             //    b3
             // b4 b0 b2
             //    b1
-
             //b0
             task->starpu_task->handles[0] = data_handles[BLOCK(i, j)];
             task->starpu_task->modes[0] = STARPU_RW;
@@ -237,26 +240,20 @@ int main(int argc, char **argv){
                 exit(1);
                 break;
             }
-
-            ret = starpu_task_submit(task->starpu_task);
-            printf("ret: %d\n", ret);
-            STARPU_CHECK_RETURN_VALUE(ret, "starpu_task_submit");
-
 		}
 	}
 
-    //
-    /*
+    int iter = 0;
     while(iterations--){
         for (int j = 0; j < block_amounts_w; j++) {
             for (int i = 0; i < block_amounts_w; i++) {
                 ret = starpu_task_submit((&tasks[BLOCK(i,j)])->starpu_task);
-                printf("ret: %d\n", ret);
+                printf("iter: %d\n", ++iter);
                 STARPU_CHECK_RETURN_VALUE(ret, "starpu_task_submit");
             }
         }
         starpu_task_wait_for_all();
-    }*/
+    }
 
     //desregistra os blocos e limpa as tasks
 	for (int j = 0; j < block_amounts_w; j++) {
