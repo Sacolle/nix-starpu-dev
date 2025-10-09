@@ -1,3 +1,6 @@
+# from https://github.com/PhoqueEberlue/nixpkgs/blob/add-starpu/pkgs/by-name/st/starpu/package.nix
+# TODO: adicionar opções de compilação extra, como debug
+# https://files.inria.fr/starpu/doc/starpu.pdf
 { 
   # derivation dependencies
   lib,
@@ -5,7 +8,6 @@
   stdenv,
   writableTmpDirAsHomeHook,
   autoreconfHook,
-  # from https://github.com/PhoqueEberlue/nixpkgs/blob/add-starpu/pkgs/by-name/st/starpu/package.nix
   # starpu dependencies
   hwloc,
   libuuid,

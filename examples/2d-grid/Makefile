@@ -1,4 +1,4 @@
-CFLAGS += $$(pkg-config --cflags starpu-1.4) -g
+CFLAGS += $$(pkg-config --cflags starpu-1.4) -g -O0
 LDLIBS += $$(pkg-config --libs starpu-1.4)
 
 TARGETS = main

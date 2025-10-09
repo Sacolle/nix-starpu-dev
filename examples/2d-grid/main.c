@@ -1,5 +1,5 @@
 #include <starpu.h>
-#define IDX(i, j) (i + j*n)
+#define IDX(i, j) ((i) + ((j)*n))
 #define BLOCK(i, j) ((i) + ((j) * block_amounts_w))
 #define SQ(x) ((x)*(x))
 
@@ -14,6 +14,7 @@ struct params {
 typedef struct task_with_args {
     struct starpu_task* starpu_task;
     struct params params;
+    char name[32];
 } Task;
 
 void print_matrix(double* A, int n){
@@ -178,6 +179,9 @@ int main(int argc, char **argv){
             assert(task->starpu_task != NULL);
             starpu_task_init(task->starpu_task);
 
+            sprintf(task->name, "bloco(%d, %d)", i, j);
+            task->starpu_task->name = task->name;
+
             task->params.block_width = block_size;
             task->params.block_amounts_w = block_amounts_w;
             task->params.border_size = border_size;
@@ -247,7 +251,8 @@ int main(int argc, char **argv){
     while(iterations--){
         for (int j = 0; j < block_amounts_w; j++) {
             for (int i = 0; i < block_amounts_w; i++) {
-                ret = starpu_task_submit((&tasks[BLOCK(i,j)])->starpu_task);
+                const int task_idx = BLOCK(i, j);
+                ret = starpu_task_submit(tasks[task_idx].starpu_task);
                 printf("iter: %d\n", ++iter);
                 STARPU_CHECK_RETURN_VALUE(ret, "starpu_task_submit");
             }
