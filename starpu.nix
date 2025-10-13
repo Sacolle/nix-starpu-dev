@@ -21,6 +21,7 @@
   cudaPackages,
 
   # Options
+  buildMode ? "debug",
   enableSimgrid ? false,
   enableMPI ? false,
   enableCUDA ? false,
@@ -30,9 +31,10 @@ stdenv.mkDerivation (finalAttrs: {
     system = "x86_64-linux";
     version = "1.4.7";
 
-inherit enableSimgrid;
-inherit enableMPI;
-inherit enableCUDA;
+    inherit buildMode;
+    inherit enableSimgrid;
+    inherit enableMPI;
+    inherit enableCUDA;
 
     src = fetchurl {
         url = "http://files.inria.fr/starpu/starpu-${finalAttrs.version}/starpu-${finalAttrs.version}.tar.gz";
@@ -60,14 +62,28 @@ inherit enableCUDA;
         ++ lib.optional finalAttrs.enableMPI mpi
         ++ lib.optional finalAttrs.enableCUDA cudaPackages.cudatoolkit;
 
-      configureFlags = [
+    
+
+    configureFlags = [
+        (lib.enableFeature true "quick-check")
         (lib.enableFeature true "quick-check")
         (lib.enableFeature false "build-examples")
         (lib.enableFeature finalAttrs.enableSimgrid "simgrid")
+
+         # Static linking is mandatory for smpi
         (lib.enableFeature finalAttrs.enableMPI "mpi")
         (lib.enableFeature finalAttrs.enableMPI "mpi-check")
-        (lib.enableFeature (!finalAttrs.enableMPI) "shared") # Static linking is mandatory for smpi
-      ];
+        (lib.enableFeature (!finalAttrs.enableMPI) "shared") 
+    ] ++ (
+        if finalAttrs.buildMode == "debug" then 
+            [ "--enable-debug" "--enable-verbose" "--enable-spinlock-check" ]
+        else
+            if finalAttrs.buildMode == "release" then 
+                [ "--enable-fast" ]
+            else builtins.throw "unrecognized build mode"
+    );
+
+
       # No need to add flags for CUDA, it should be detected by ./configure
 
       postConfigure = ''
