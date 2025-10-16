@@ -1,12 +1,36 @@
 #include <starpu.h>
-#define IDX(i, j) ((i) + ((j)*n))
-#define BLOCK(i, j) ((i) + ((j) * block_amounts_w))
-#define SQ(x) ((x)*(x))
 
-#define BELOW 0
-#define RIGHT 1
-#define ABOVE 2
-#define LEFT 3
+// number of time steps that are kept in memory
+#ifndef MAX_CONCURRENT_ITERATIONS
+    #define MAX_CONCURRENT_ITERATIONS 100
+#endif
+
+#ifndef BASE_VOLUME_WIDTH
+    #define BASE_VOLUME_WIDTH 296
+#endif
+
+#ifndef CUBE_SEGMENT_WIDTH
+    #define CUBE_SEGMENT_WIDTH 30
+#endif
+
+#ifndef KERNEL_SIZE
+    #define KERNEL_SIZE 4
+#endif
+
+#define VOLUME_WIDTH (BASE_VOLUME_WIDTH + KERNEL_SIZE)
+
+#if (VOLUME_WIDTH % CUBE_SEGMENT_WIDTH) != 0
+    #error A largura do volume + kernel size devem ser divisíveis pela largura do segmento.
+#endif
+
+#define WIDTH_IN_CUBES (VOLUME_WIDTH / CUBE_SEGMENT_WIDTH)
+
+// linear idx https://stackoverflow.com/a/34363187
+#define CUBE_I(x, y, z) ((x) + ((y) * CUBE_SEGMENT_WIDTH) + ((z) * CUBE_SEGMENT_WIDTH * CUBE_SEGMENT_WIDTH))
+#define BLOCK_I(i, j, k) ((i) + ((j) * WIDTH_IN_CUBES) + ((k) * WIDTH_IN_CUBES * WIDTH_IN_CUBES))
+#define SQUARE(x) ((x)*(x))
+#define CUBE(x) ((x)*(x)*(x))
+
 
 struct params {
     int block_x;
@@ -24,42 +48,9 @@ typedef struct task_with_args {
     char nameB[32];
 } Task;
 
-//#define DEBUG
 
-void print_matrix(double* A, int block_amounts_w, int block_w){
-    const int bs = block_w * block_w;
-
-    #ifdef DEBUG
-    for (int by = 0; by < block_amounts_w; by++){
-        for (int j = 0; j < block_w; j++){
-            for (int bx = 0; bx < block_amounts_w; bx++){
-                for (int i = 0; i < block_w; i++){
-                    const int idx = (BLOCK(bx, by) * bs) + j * block_w + i;
-                    printf("%0.2f, ", A[idx]);
-                }
-            }
-            printf("\n");
-        }
-    }
-    printf("\n");
-    #endif
-}
-
-void read_params(
-    int argc, char **argv, 
-    int *board_size, int *block_size, int* iterations
-){
-	assert(argc > 3);
-
-	*board_size = atoi(argv[1]);
-	*block_size = atoi(argv[2]);
-	*iterations = atoi(argv[3]);
-
-    assert(*iterations > 0);
-}
 /*
 Enche a grid com os valores da borda como 0 e o centro como aleatórios
-*/
 void fill(double *A, int block_amounts_w, int block_w, int border_size){
     const int bs = block_w * block_w;
     const int n = block_w;
@@ -91,182 +82,93 @@ void fill(double *A, int block_amounts_w, int block_w, int border_size){
         }
     }
 }
+*/
 
-void stencil_cpu(void *descr[], void *cl_args){
-    struct starpu_variable_interface *v = (struct starpu_variable_interface *) descr[0];
-    
-    // um desses blocos não é passado, então segue a ordem anti-horária para o bloco omitido
-	double* writeb = (double *) STARPU_VECTOR_GET_PTR(descr[0]);
-	double* centerb = (double *) STARPU_VECTOR_GET_PTR(descr[1]);
+struct atomic_rc_ptr {
+    //acredito que não precise de um indice interno para indexar dentro de cubes, 
+    //pois isso vai ocorrer dentro do laço de execução, mas TODO: validar
+    double* cubes[CUBE(WIDTH_IN_CUBES)];
+    // when reaches CUBE(WIDTH_IN_CUBES)
+    // then all elements in the list above where used and the list can be freed.
+    // updates with the callback for the computation
+    _Atomic int count; 
+};
 
-    struct params *p = (struct params* ) cl_args;
-    //size of the block
-    const int block_amounts_w = p->block_amounts_w;
-    const int n = p->block_width;
-    const int block_size = SQ(n);
-    const int border_size = p->border_size;
+// como cada iteração tem uma forte dependência de dados na anterior
+// a única forma de todos os cubos da iteração t serem usados pela iteração t + 1 é
+// se todos os cubos da iteração t - 1 tiverem sido usados.
+typedef struct circular_buffer_with_rc {
+    struct atomic_rc_ptr  list[MAX_CONCURRENT_ITERATIONS];
+    // acho q esse cara não precisa ser atômico, mas idk, n faz mal
+    _Atomic int ffidx; //fist free index 
+} RcCircularBuf;
 
-    
-    const int start_x = p->block_x == 0 ? p->border_size : 0; // if this then left side
-    const int end_x = n - (p->block_x == block_amounts_w - 1 ? p->border_size : 0); // if this then right side
 
-    const int start_y = p->block_y == 0 ? p->border_size : 0; // if this then top side
-    const int end_y = n - (p->block_y == block_amounts_w - 1 ? p->border_size : 0); // if this then bottom side
-
-    // atribui o valor do bloco central ao bloco faltante
-    // seguindo a conveção de primeiro para baixo, depois anti horário.
-    double* adj_blocks[4];
-
-    if(p->block_x == 0){
-        // does not use left block
-        if(p->block_y == 0){
-            // does not use above block
-            // c b3
-            // b2
-            adj_blocks[BELOW] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[RIGHT] = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-            adj_blocks[ABOVE] = centerb;
-            adj_blocks[LEFT]  = centerb;
-
-        }else if(p->block_y == block_amounts_w - 1){
-            // does not use below block
-            // b3
-            // c b2
-            adj_blocks[BELOW] = centerb;
-            adj_blocks[RIGHT] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[ABOVE] = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-            adj_blocks[LEFT]  = centerb;
-
-        }else{
-            // only does not use left block
-            // b4
-            // c b3
-            // b2
-            adj_blocks[BELOW] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[RIGHT] = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-            adj_blocks[ABOVE] = ( double* ) STARPU_VECTOR_GET_PTR(descr[4]);
-            adj_blocks[LEFT]  = centerb;
-        }
-    }else if(p->block_x == block_amounts_w - 1){
-        // does not use right block
-        if(p->block_y == 0){
-            // does not use above block
-            // b3 c
-            //   b2
-            adj_blocks[BELOW] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[RIGHT] = centerb;
-            adj_blocks[ABOVE] = centerb;
-            adj_blocks[LEFT]  = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-
-        }else if(p->block_y == block_amounts_w - 1){
-            // does not use below block
-            //   b2
-            // b3 c 
-            adj_blocks[BELOW] = centerb;
-            adj_blocks[RIGHT] = centerb;
-            adj_blocks[ABOVE] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[LEFT]  = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-
-        }else{
-            // only does not use right block
-            //   b3
-            // b4 c 
-            //   b2
-            adj_blocks[BELOW] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[RIGHT] = centerb;
-            adj_blocks[ABOVE] = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-            adj_blocks[LEFT]  = ( double* ) STARPU_VECTOR_GET_PTR(descr[4]);
-        }
-    }else{
-        if(p->block_y == 0){
-            // only does not use above block
-            // b4 c b3
-            //   b2
-            adj_blocks[BELOW] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[RIGHT] = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-            adj_blocks[ABOVE] = centerb;
-            adj_blocks[LEFT]  = ( double* ) STARPU_VECTOR_GET_PTR(descr[4]);
-
-        }else if(p->block_y == block_amounts_w - 1){
-            // only does not use below block
-            //   b3
-            // b4 c b2
-            adj_blocks[BELOW] = centerb;
-            adj_blocks[RIGHT] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[ABOVE] = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-            adj_blocks[LEFT]  = ( double* ) STARPU_VECTOR_GET_PTR(descr[4]);
-        }else{
-            //uses all blocks
-            adj_blocks[BELOW] = ( double* ) STARPU_VECTOR_GET_PTR(descr[2]);
-            adj_blocks[RIGHT] = ( double* ) STARPU_VECTOR_GET_PTR(descr[3]);
-            adj_blocks[ABOVE] = ( double* ) STARPU_VECTOR_GET_PTR(descr[4]);
-            adj_blocks[LEFT]  = ( double* ) STARPU_VECTOR_GET_PTR(descr[5]);
+RcCircularBuf rc_circular_buffer_create(){
+    RcCircularBuf rcb;
+    rcb.ffidx = 0;
+    for(int i = 0; i < MAX_CONCURRENT_ITERATIONS; i++){
+        rcb.list[i].count = 0;
+        for(int j = 0; j < CUBE(WIDTH_IN_CUBES); j++){
+            rcb.list[i].cubes[j] = NULL;
         }
     }
-    // TODO: OS blocos estão em coordenadas locais, a conta do índice deles está errada
-    for(int y = start_y; y < end_y; y++){
-        for(int x = start_x; x < end_x; x++){
-            
-            const double below = y == n - 1 ? 
-                adj_blocks[BELOW][IDX(x, 0)] : 
-                centerb[IDX(x, y + 1)];
-
-            const double above = y == 0 ? 
-                adj_blocks[ABOVE][IDX(x, n - 1)] : 
-                centerb[IDX(x, y - 1)];
-
-            const double right = x == n - 1 ? 
-                adj_blocks[RIGHT][IDX(0, y)] : 
-                centerb[IDX(x + 1, y)];
-
-            const double left = x == 0 ? 
-                adj_blocks[LEFT][IDX(n - 1, y)] : 
-                centerb[IDX(x - 1, y)];
-
-            const int center_idx = IDX(x, y);
-            writeb[center_idx] = (centerb[center_idx] + below + above + right + left) / ((double) 5.0);
-        }
-    }
+    return rcb;
 }
 
-struct starpu_codelet stencil6_cl =
-	{
-		.cpu_funcs = {stencil_cpu},
-		.nbuffers = 6,
-		.modes = {STARPU_W, STARPU_R, STARPU_R, STARPU_R, STARPU_R, STARPU_R},
-		.model = &starpu_perfmodel_nop,
-};
+//create buffer 
+int rcb_make_buffer(RcCircularBuf* rcb, struct atomic_rc_ptr** buffer){
+    // check if first free index buffer is free 
+    if(rcb->list[rcb->ffidx].count != 0){
+        return 1; //if not return
+    }
 
-struct starpu_codelet stencil5_cl =
-	{
-		.cpu_funcs = {stencil_cpu},
-		.nbuffers = 5,
-		.modes = {STARPU_W, STARPU_R, STARPU_R, STARPU_R, STARPU_R},
-		.model = &starpu_perfmodel_nop,
-};
+    // if return the ptr to the buffer
 
-struct starpu_codelet stencil4_cl =
-	{
-		.cpu_funcs = {stencil_cpu},
-		.nbuffers = 4,
-		.modes = {STARPU_W, STARPU_R, STARPU_R, STARPU_R},
-		.model = &starpu_perfmodel_nop,
-};
+    rcb->ffidx = (rcb->ffidx + 1) % MAX_CONCURRENT_ITERATIONS;
+}
+
+
+
+void stencil_cpu(void *descr[], void *cl_args){
+
+}
 
 int main(int argc, char **argv){
+
+    struct starpu_codelet avrg_filter =
+        {
+            .cpu_funcs = {stencil_cpu},
+            .nbuffers = 8, //número máximo de buffers da config default
+            .modes = {
+                STARPU_W, // b(x, y, z, t) resultado
+                STARPU_R, // b(x, y, z, t - 1) centro
+                STARPU_R, // b(x + 1, y, z, t - 1) east (leste)
+                STARPU_R, // b(x - 1, y, z, t - 1) west (oeste)
+                STARPU_R, // b(x, y + 1, z, t - 1) north
+                STARPU_R, // b(x, y - 1, z, t - 1) south
+                STARPU_R, // b(x, y, z + 1, t - 1) up
+                STARPU_R, // b(x, y, z + 1, t - 1) down
+            },
+            .model = &starpu_perfmodel_nop,
+            //add a callback?
+    };
+
 	int ret = starpu_init(NULL);
 	STARPU_CHECK_RETURN_VALUE(ret, "starpu_init");
 
-    int board_size, block_size, iterations, border_size = 1;
-	read_params(argc, argv, &board_size, &block_size, &iterations);
+	assert(argc > 0);
+	const int iterations = atoi(argv[1]);
+    assert(iterations > 0);
+
+    //circular list to keep reference to the elements to free tem in the end
+    RcCircularBuf iteration_cubes = rc_circular_buffer_create();
 
 
-    const int grid_size = board_size + border_size;
-
-    assert(grid_size % block_size == 0);
-    const int block_amounts_w = (grid_size / block_size);
-
-    printf("blocks are %d\n", block_amounts_w);
+    /*
+    // é necessário inicializar duas matrizes iniciais, pois para computar o bloco(x,y,z,t)
+    // também é necessário o bloco(x,y,z,t-1)
+    // agora ao invés de um blocão, os blocos seram disjuntos
 
 	double *gridA = malloc(SQ(grid_size) * sizeof(double));
 	fill(gridA, block_amounts_w, block_size, border_size);
@@ -275,16 +177,25 @@ int main(int argc, char **argv){
 	double *gridB = malloc(SQ(grid_size) * sizeof(double));
     memcpy(gridB, gridA, SQ(grid_size) * sizeof(double));
 	print_matrix(gridB, block_amounts_w, block_size);
+    */
 
 
+    /*
 
+    //data handles deverão ser lidados de forma diferente, já que agora eles são por iteração.
+    
 	starpu_data_handle_t *data_handles_A = 
         (starpu_data_handle_t*) malloc(SQ(block_amounts_w) * sizeof(*data_handles_A));
 
 	starpu_data_handle_t *data_handles_B = 
         (starpu_data_handle_t*) malloc(SQ(block_amounts_w) * sizeof(*data_handles_B));
-    
-    //regitra os blocos
+    */
+
+    /*
+
+    //o registro passa já para o momento de execução
+
+    //registra os blocos
 	for (int j = 0; j < block_amounts_w; j++) {
         for (int i = 0; i < block_amounts_w; i++) {
             const int block_idx = BLOCK(i, j);
@@ -308,8 +219,10 @@ int main(int argc, char **argv){
 			);
 		}
 	}
+    */
     printf("Creating the tasks...\n");
     //cria as tasks
+    /*
     Task *tasks = malloc(SQ(block_amounts_w) * sizeof(Task));
     assert(tasks != NULL);
 
@@ -405,10 +318,10 @@ int main(int argc, char **argv){
                 }
             }
 		}
-	}
+	}*/
 
     printf("Runing the tasks over %d iterations.\n", iterations);
-
+    /*
     int iter = 0;
     while(iterations--){
         for (int j = 0; j < block_amounts_w; j++) {
@@ -431,11 +344,10 @@ int main(int argc, char **argv){
         }
         starpu_task_wait_for_all();
     }
-
-    print_matrix(gridA, block_amounts_w, block_size);
-    print_matrix(gridB, block_amounts_w, block_size);
+    */
 
     //desregistra os blocos e limpa as tasks
+    /*
 	for (int j = 0; j < block_amounts_w; j++) {
         for (int i = 0; i < block_amounts_w; i++) {
             const int block = BLOCK(i, j);
@@ -451,7 +363,7 @@ int main(int argc, char **argv){
 		}
 	}
     free(tasks);
-
+    */
 	starpu_shutdown();
 	return 0;
 }
