@@ -1,4 +1,6 @@
 #include <starpu.h>
+#include <pthread.h>
+
 #define IDX(i, j) ((i) + ((j)*n))
 #define BLOCK(i, j) ((i) + ((j) * block_amounts_w))
 #define SQ(x) ((x)*(x))
@@ -262,6 +264,11 @@ struct starpu_codelet stencil4_cl =
 		.model = &starpu_perfmodel_nop,
 };
 
+void callback_func(void *callback_arg){
+    pthread_t current_thread_id = pthread_self();
+    printf("Callback in thread with ID %lu\n", (unsigned long)current_thread_id);
+}
+
 int main(int argc, char **argv){
 	int ret = starpu_init(NULL);
 	STARPU_CHECK_RETURN_VALUE(ret, "starpu_init");
@@ -346,6 +353,9 @@ int main(int argc, char **argv){
             // b5 b1 b3  ->  b0
             //    b2
             for(int k = 0; k < 2; k++){
+                //callback
+                task->starpu_task[k]->callback_func = callback_func;
+
                 task->starpu_task[k]->cl_arg = &task->params;
                 task->starpu_task[k]->cl_arg_size = sizeof(struct params);
 

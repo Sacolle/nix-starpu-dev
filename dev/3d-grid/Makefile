@@ -1,7 +1,7 @@
 
 
 
-CFLAGS += $$(pkg-config --cflags starpu-1.4) -g
+CFLAGS += $$(pkg-config --cflags starpu-1.4) -g -pthread
 LDLIBS += $$(pkg-config --libs starpu-1.4)
 
 TARGETS = main

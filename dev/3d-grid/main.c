@@ -1,4 +1,8 @@
 #include <starpu.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include <stdint.h>
 
 // number of time steps that are kept in memory
 #ifndef MAX_CONCURRENT_ITERATIONS
@@ -32,58 +36,42 @@
 #define CUBE(x) ((x)*(x)*(x))
 
 
-struct params {
-    int block_x;
-    int block_y;
-    int block_width;
-    int block_amounts_w;
-    int border_size;
-};
+void print_block(double* block){
+    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
+        printf("[\n");
+        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
+            printf("\t[");
+            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
+                printf("%.2d, ", block[CUBE_I(x, y, z)]);
+            }
+            printf("]\n");
+        }
+        printf("]\n");
+    }
+}
+//initialize block, the border consists of value 0.0
+void initialize_block(double* block, int i, int j, int k){
+    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
+        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
+            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
 
+                #define START(blk, idx) ((blk) == 0 && (idx) < KERNEL_SIZE)
+                #define END(blk, idx) ((blk) == (WIDTH_IN_CUBES - 1) && (idx) >= (CUBE_SEGMENT_WIDTH - KERNEL_SIZE))
+                #define INEDGE(blk_idx, cidx) (START(blk_idx, cidx) || END(blk_idx, cidx))
 
-typedef struct task_with_args {
-    struct starpu_task* starpu_task[2];
-    struct params params;
-    char nameA[32];
-    char nameB[32];
-} Task;
-
-
-/*
-Enche a grid com os valores da borda como 0 e o centro como aleatórios
-void fill(double *A, int block_amounts_w, int block_w, int border_size){
-    const int bs = block_w * block_w;
-    const int n = block_w;
-
-    for (int by = 0; by < block_amounts_w; by++){
-        for (int bx = 0; bx < block_amounts_w; bx++){
-            for (int j = 0; j < block_w; j++){
-                for (int i = 0; i < block_w; i++){
-                    const int idx = (BLOCK(bx, by) * bs) + j * block_w + i;
-
-                    // canto esquerdo
-                    if(bx == 0 && i == 0){
-                        A[idx] = 0.0;
-                    // canto direito
-                    }else if(bx == block_amounts_w - 1 && i == block_w - 1){
-                        A[idx] = 0.0;
-                    //topo
-                    }else if(by == 0 && j == 0){
-                        A[idx] = 0.0;
-                    //base
-                    }else if(by == block_amounts_w - 1 && j == block_w - 1){
-                        A[idx] = 0.0;
-                    }else{
-                        A[idx] = 10.0 * ((double) rand() / RAND_MAX);
-                    }
-
+                //TODO: validate
+                //if it starts or ends in an edge, set to 0
+                if( INEDGE(k, z) || INEDGE(j, y) || INEDGE(i, x)){
+                    block[CUBE_I(x, y, z)] = 0.0;
+                }else{
+                    block[CUBE_I(x, y, z)] = 10.0 * ((double) rand() / RAND_MAX);
                 }
             }
         }
     }
 }
-*/
 
+/*
 struct atomic_rc_ptr {
     //acredito que não precise de um indice interno para indexar dentro de cubes, 
     //pois isso vai ocorrer dentro do laço de execução, mas TODO: validar
@@ -124,10 +112,78 @@ int rcb_make_buffer(RcCircularBuf* rcb, struct atomic_rc_ptr** buffer){
     }
 
     // if return the ptr to the buffer
+    //TODO: unfinished
 
     rcb->ffidx = (rcb->ffidx + 1) % MAX_CONCURRENT_ITERATIONS;
+}*/
+
+
+typedef struct arc_data_handle {
+    starpu_data_handle_t handle;
+    _Atomic int uses;
+} *arc_data_handle_t;
+
+//do not call with uses < 1, please
+//allocates the arc, but does not initialize the inner data handle
+arc_data_handle_t create_arc(int uses){
+    arc_data_handle_t ptr = (arc_data_handle_t) malloc(sizeof(arc_data_handle_t));
+    if(ptr == NULL){
+        return NULL;
+    }
+    ptr->uses = uses;
+    ptr->handle = NULL;
+
+    return ptr;
+}
+//fetches then subtracks, therefore if n = 1, then we n - 1, n - 1 = 0
+//if true, the underlining data can be freed with no issue
+bool can_free_arc(arc_data_handle_t ptr){
+    return atomic_fetch_sub(&ptr->uses, 1) == 1;
 }
 
+
+struct cl_args {
+    uint32_t i;
+    uint32_t j;
+    uint32_t k;
+    uint32_t t;
+};
+
+struct cl_args* make_args(uint32_t i, uint32_t j, uint32_t k, uint32_t t){
+    struct cl_args* args = (struct cl_args*) malloc(sizeof(struct cl_args));
+    if(args == NULL){
+        return NULL;
+    }
+    args->i = i;
+    args->j = j;
+    args->k = k;
+    args->t = t;
+
+    return args;
+}
+
+//NOTE: pode reduzir o número de alocações alocando o nome e cl_args dentro de callback_args
+struct callback_args {
+    char* name;
+    struct cl_args* args;
+    arc_data_handle_t arcs[7];
+};
+
+
+struct callback_args* make_callback_args(char* name, struct cl_args* cl_args){
+    struct callback_args* cb_args = (struct callback_args*) malloc(sizeof(struct callback_args));
+    if(cb_args == NULL){
+        return NULL;
+    }
+    cb_args->name = name;
+    cb_args->args = cl_args;
+
+    for(int i = 0; i < 7; i++){
+        cb_args->arcs[i] = NULL;
+    }
+
+    return cb_args;
+}
 
 
 void stencil_cpu(void *descr[], void *cl_args){
@@ -139,7 +195,9 @@ int main(int argc, char **argv){
     struct starpu_codelet avrg_filter =
         {
             .cpu_funcs = {stencil_cpu},
-            .nbuffers = 8, //número máximo de buffers da config default
+            // acredito que esse NBUFFERS vai atrapalhar na performance
+            .nbuffers = STARPU_VARIABLE_NBUFFERS, 
+            /*
             .modes = {
                 STARPU_W, // b(x, y, z, t) resultado
                 STARPU_R, // b(x, y, z, t - 1) centro
@@ -149,7 +207,7 @@ int main(int argc, char **argv){
                 STARPU_R, // b(x, y - 1, z, t - 1) south
                 STARPU_R, // b(x, y, z + 1, t - 1) up
                 STARPU_R, // b(x, y, z + 1, t - 1) down
-            },
+            },*/
             .model = &starpu_perfmodel_nop,
             //add a callback?
     };
@@ -161,71 +219,183 @@ int main(int argc, char **argv){
 	const int iterations = atoi(argv[1]);
     assert(iterations > 0);
 
-    //circular list to keep reference to the elements to free tem in the end
-    RcCircularBuf iteration_cubes = rc_circular_buffer_create();
 
-
-    /*
     // é necessário inicializar duas matrizes iniciais, pois para computar o bloco(x,y,z,t)
     // também é necessário o bloco(x,y,z,t-1)
     // agora ao invés de um blocão, os blocos seram disjuntos
+    arc_data_handle_t* prev = (arc_data_handle_t*) malloc(CUBE(WIDTH_IN_CUBES));
 
-	double *gridA = malloc(SQ(grid_size) * sizeof(double));
-	fill(gridA, block_amounts_w, block_size, border_size);
-	print_matrix(gridA, block_amounts_w, block_size);
+    for(int k = 0; k < WIDTH_IN_CUBES; k++){
+        const int neighbors_z_axis = ((k == 0) || (k == WIDTH_IN_CUBES - 1)) ? 1 : 2;
 
-	double *gridB = malloc(SQ(grid_size) * sizeof(double));
-    memcpy(gridB, gridA, SQ(grid_size) * sizeof(double));
-	print_matrix(gridB, block_amounts_w, block_size);
-    */
+        for(int j = 0; j < WIDTH_IN_CUBES; j++){
+            const int neighbors_y_axis = ((j == 0) || (j == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+
+            for(int i = 0; i < WIDTH_IN_CUBES; i++){
+                const int neighbors_x_axis = ((i == 0) || (i == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+
+                const int num_of_nighbors = neighbors_x_axis + neighbors_y_axis + neighbors_z_axis;
+                //cada vizinho e ele mesmo vai precisar usar
+                arc_data_handle_t arc = create_arc(num_of_nighbors + 1);
+                assert(arc != NULL);
+
+                starpu_block_data_register(&arc->handle, 
+                    STARPU_MAIN_RAM, -1, // -1 indica para o starpu alocar
+                    //stride for y      stride for z
+                    CUBE_SEGMENT_WIDTH, SQUARE(CUBE_SEGMENT_WIDTH),
+                    // width             height             depth
+                    CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, 
+                    sizeof(double)
+                );
+
+                double* allocated_block = STARPU_BLOCK_GET_PTR(arc->handle);
+                initialize_block(allocated_block, i, j, k);
+
+                print_block(allocated_block);
+
+                prev[BLOCK_I(i,j,k)] = arc; 
+            }
+        }
+    }
+
+    arc_data_handle_t* curr = (arc_data_handle_t*) malloc(CUBE(WIDTH_IN_CUBES));
 
 
+    for(int t = 1; t < iterations; t++){
+        for(int k = 0; k < WIDTH_IN_CUBES; k++){
+            const int neighbors_z_axis = ((k == 0) || (k == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+
+            for(int j = 0; j < WIDTH_IN_CUBES; j++){
+                const int neighbors_y_axis = ((j == 0) || (j == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+
+                for(int i = 0; i < WIDTH_IN_CUBES; i++){
+                    const int neighbors_x_axis = ((i == 0) || (i == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+
+                    const int num_of_nighbors = neighbors_x_axis + neighbors_y_axis + neighbors_z_axis;
+                    //cada vizinho e ele mesmo vai precisar usar
+                    arc_data_handle_t arc = create_arc(num_of_nighbors + 1);
+                    assert(arc != NULL);
+
+                    starpu_block_data_register(&arc->handle, 
+                        STARPU_MAIN_RAM, -1,
+                        CUBE_SEGMENT_WIDTH, SQUARE(CUBE_SEGMENT_WIDTH),
+                        CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, 
+                        sizeof(double)
+                    );
+
+                    // 
+                    struct starpu_task* task = starpu_task_create();
+
+                    task->cl = &stencil_cpu;
+
+                    char* name = (char*) malloc(64);
+                    assert(name != NULL);
+                    sprintf(name, "[%d, %d, %d, %d]", i, j, k, t);
+
+                    task->name = name;
+
+                    struct cl_args* args = make_args(i,j,k,t);
+                    assert(args != NULL);
+
+                    task->cl_arg = args;
+                    task->cl_arg_size = sizeof(struct cl_args);
+
+                    struct callback_args* cb_agrs = make_callback_args(name, args);
+                    assert(cb_agrs != NULL);
+
+                    //select the handles
+                    //need to stablish an order for selection, em 3d eg dificil
+                    //          ^   ^
+                    //          |  /
+                    //          y z
+                    //          |/
+                    // -- x -- >
+                    // ordem ao invés de rotacional vai ser via eixo,
+                    // blocos do z, depois do y, depois do x
+                    // no caso primeiro vai o bloco curr, 
+                    // depois o central prev e dps o resto na ordem estabelecida
+
+                    // buffers iniciais
+                    task->handles[0] = curr[BLOCK_I(i, j, k)]->handle; //TODO: allocate the curr
+                    task->modes[0] = STARPU_W;
+
+                    task->handles[1] = prev[BLOCK_I(i, j, k)]->handle;
+                    task->modes[1] = STARPU_R;
+                    //passa para o callback o arc inteiro, q a iteração anterior tem q ser liberada
+                    cb_agrs->arcs[0] = prev[BLOCK_I(i, j, k)];
+
+                    int nbuffers = 2;
+                    
+                    if(k != 0){
+                        // tem o bloco k - 1
+                        const int idx = BLOCK_I(i, j, k - 1);
+                        task->handles[nbuffers] = prev[idx]->handle;
+                        task->modes[nbuffers] = STARPU_R;
+                        cb_agrs->arcs[nbuffers - 1] = prev[idx];
+
+                        nbuffers++;
+                    }
+
+                    if(k != WIDTH_IN_CUBES - 1){
+                        //tem o bloco k + 1
+                        const int idx = BLOCK_I(i, j, k + 1);
+                        task->handles[nbuffers] = prev[idx]->handle;
+                        task->modes[nbuffers] = STARPU_R;
+                        cb_agrs->arcs[nbuffers - 1] = prev[idx];
+
+                        nbuffers++;
+                    }
+
+                    if(j != 0){
+                        // tem o bloco j - 1
+                        const int idx = BLOCK_I(i, j - 1, k);
+                        task->handles[nbuffers] = prev[idx]->handle;
+                        task->modes[nbuffers] = STARPU_R;
+                        cb_agrs->arcs[nbuffers - 1] = prev[idx];
+
+                        nbuffers++;
+                    }
+
+                    if(j != WIDTH_IN_CUBES - 1){
+                        //tem o bloco j + 1
+                        const int idx = BLOCK_I(i, j + 1, k);
+                        task->handles[nbuffers] = prev[idx]->handle;
+                        task->modes[nbuffers] = STARPU_R;
+                        cb_agrs->arcs[nbuffers - 1] = prev[idx];
+
+                        nbuffers++;
+                    }
+
+                    if(i != 0){
+                        // tem o bloco j - 1
+                        const int idx = BLOCK_I(i - 1, j, k);
+                        task->handles[nbuffers] = prev[idx]->handle;
+                        task->modes[nbuffers] = STARPU_R;
+                        cb_agrs->arcs[nbuffers - 1] = prev[idx];
+
+                        nbuffers++;
+                    }
+
+                    if(i != WIDTH_IN_CUBES - 1){
+                        //tem o bloco j + 1
+                        const int idx = BLOCK_I(i + 1, j, k);
+                        task->handles[nbuffers] = prev[idx]->handle;
+                        task->modes[nbuffers] = STARPU_R;
+                        cb_agrs->arcs[nbuffers - 1] = prev[idx];
+
+                        nbuffers++;
+                    }
+
+                    assert(num_of_nighbors + 2 == nbuffers);
+                    task->nbuffers = nbuffers;
+
+                    //TODO: submit
+                }
+            }
+        }
+        prev = curr;
+    }
     /*
-
-    //data handles deverão ser lidados de forma diferente, já que agora eles são por iteração.
-    
-	starpu_data_handle_t *data_handles_A = 
-        (starpu_data_handle_t*) malloc(SQ(block_amounts_w) * sizeof(*data_handles_A));
-
-	starpu_data_handle_t *data_handles_B = 
-        (starpu_data_handle_t*) malloc(SQ(block_amounts_w) * sizeof(*data_handles_B));
-    */
-
-    /*
-
-    //o registro passa já para o momento de execução
-
-    //registra os blocos
-	for (int j = 0; j < block_amounts_w; j++) {
-        for (int i = 0; i < block_amounts_w; i++) {
-            const int block_idx = BLOCK(i, j);
-            const int block_area = SQ(block_size);
-            const int start_idx_of_block = block_idx * block_area;
-
-			starpu_vector_data_register(
-				&data_handles_A[block_idx],
-				STARPU_MAIN_RAM,
-				(uintptr_t) &(gridA[start_idx_of_block]), 
-                block_area,
-				sizeof(double)
-			);
-
-			starpu_vector_data_register(
-				&data_handles_B[block_idx],
-				STARPU_MAIN_RAM,
-				(uintptr_t) &(gridB[start_idx_of_block]), 
-                block_area,
-				sizeof(double)
-			);
-		}
-	}
-    */
-    printf("Creating the tasks...\n");
-    //cria as tasks
-    /*
-    Task *tasks = malloc(SQ(block_amounts_w) * sizeof(Task));
-    assert(tasks != NULL);
-
 	for (int j = 0; j < block_amounts_w; j++) {
         for (int i = 0; i < block_amounts_w; i++) {
             Task* task = &tasks[BLOCK(i,j)];
