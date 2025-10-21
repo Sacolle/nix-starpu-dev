@@ -1,7 +1,7 @@
 
 
 
-CFLAGS += $$(pkg-config --cflags starpu-1.4) -g -pthread
+CFLAGS += $$(pkg-config --cflags starpu-1.4) -g -pthread -O0
 LDLIBS += $$(pkg-config --libs starpu-1.4)
 
 TARGETS = main
@@ -9,7 +9,7 @@ TARGETS = main
 all: $(TARGETS)
 
 run: $(TARGETS)
-	./main 8 3 10
+	./main 1
 
 clean:
 	rm -f $(TARGETS) *.o
