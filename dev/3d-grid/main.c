@@ -4,17 +4,12 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-// number of time steps that are kept in memory
-#ifndef MAX_CONCURRENT_ITERATIONS
-    #define MAX_CONCURRENT_ITERATIONS 100
-#endif
-
 #ifndef BASE_VOLUME_WIDTH
-    #define BASE_VOLUME_WIDTH 296
+    #define BASE_VOLUME_WIDTH 76
 #endif
 
 #ifndef CUBE_SEGMENT_WIDTH
-    #define CUBE_SEGMENT_WIDTH 30
+    #define CUBE_SEGMENT_WIDTH 8
 #endif
 
 #ifndef KERNEL_SIZE
@@ -157,7 +152,8 @@ struct cl_args {
 
 #define MAX_NEIGHBOORS 7
 
-//NOTE: pode reduzir o número de alocações alocando o nome e cl_args dentro de callback_args
+// estrura que aloca os dados necessários para a computação do codelet
+// passado inteiro para o callback, que automaticamento o desaloca (validar)
 typedef struct codelet_data {
     char name[48];
     struct cl_args args;
@@ -193,6 +189,20 @@ void cb_free_arcs(void* callback_arg){
             // if uses == 0 after sub, it returns true and 
             //this functions needs to free the underlying data
             if(free_arc(arc)){
+                // TODO: não posso fazer isso, preciso de outra estratégia para liberar
+                // atualmente o modelo seria colocar esse ponteiro em um lista linkada e liberar na main
+                // essa lista precisaria de um mutex pq seria acessada por várias threads
+                // seria uma mpsc
+                // mas considerando que um sistema de ARC do jeito pensado não funciona
+                // deve-se tentar uma alternativa
+                // 
+                // tentar com o starpu_data_unregister_submit()
+                // e chamar no prev[BLOCK(i,j,k)] que talvez não dê problema
+                // questão fica, como extrair o resultado final?
+                // como registrar resultados intermediários?
+                // na real nisso o como só manda limpar quando não precisa o prev,
+                // o último curr vai ficar sem essa chamada, sendo ok de ler.
+                // TODO: testar com starpu_data_unregister_submit
                 starpu_data_unregister_no_coherency(arc->handle);
                 free(arc);
             }
@@ -238,7 +248,7 @@ int main(int argc, char **argv){
     // é necessário inicializar duas matrizes iniciais, pois para computar o bloco(x,y,z,t)
     // também é necessário o bloco(x,y,z,t-1)
     // agora ao invés de um blocão, os blocos seram disjuntos
-    arc_data_handle_t* prev = (arc_data_handle_t*) malloc(CUBE(WIDTH_IN_CUBES));
+    arc_data_handle_t* prev = (arc_data_handle_t*) malloc(sizeof(arc_data_handle_t) * CUBE(WIDTH_IN_CUBES));
 
     // need this because the starpu automatic alocation happens on demand
     // an if can be used to free this at the end of the code or after the first iteration
@@ -262,6 +272,8 @@ int main(int argc, char **argv){
                 double* allocated_block = (double*) malloc(sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH));
                 initialize_block(allocated_block, i, j, k);
 
+                initial_values[BLOCK_I(i, j, k)] = allocated_block;
+
                 //print_block(allocated_block);
 
                 //let starpu allocate the data by setting home_node = -1 
@@ -275,14 +287,16 @@ int main(int argc, char **argv){
                     CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, 
                     sizeof(double)
                 );
-                initial_values[BLOCK_I(i, j, k)] = allocated_block;
-
+                // assert that its properly registered
+                assert(arc->handle != NULL);
+                assert(starpu_data_get_local_ptr(arc->handle) != NULL);
+                //error here?
                 prev[BLOCK_I(i,j,k)] = arc; 
             }
         }
     }
 
-    arc_data_handle_t* curr = (arc_data_handle_t*) malloc(CUBE(WIDTH_IN_CUBES));
+    arc_data_handle_t* curr = (arc_data_handle_t*) malloc(sizeof(arc_data_handle_t) * CUBE(WIDTH_IN_CUBES));
 
 
     for(int t = 0; t < iterations; t++){

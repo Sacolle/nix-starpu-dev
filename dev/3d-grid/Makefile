@@ -6,6 +6,7 @@ LDLIBS += $$(pkg-config --libs starpu-1.4)
 
 TARGETS = main
 
+
 all: $(TARGETS)
 
 run: $(TARGETS)
