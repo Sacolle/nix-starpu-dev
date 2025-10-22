@@ -2,6 +2,6 @@
 
 - [ ] Fazer uma aplicação que computa um filtro da média sobre um espaço 3d segmentado em blocos
 - [ ] Parametrizar o tamanho do kernel da aplicação (não necessariamente diagonal)
-- [ ] Obter paralelismo entre as iterações usando blocos separados
-- [ ] Parametrizar o número de blocos existentes
-- [ ] Manter a implementação com um único stencil
+- [x] Obter paralelismo entre as iterações usando blocos separados
+- [x] Parametrizar o número de blocos existentes
+- [x] Manter a implementação com um único stencil
