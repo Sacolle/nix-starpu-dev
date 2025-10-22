@@ -25,6 +25,7 @@
                 # for bash to work properlly inside vscode
                 bashInteractive
                 gdb
+                valgrind
             ];
             shellHook = ''
               export SHELL=/run/current-system/sw/bin/bash
