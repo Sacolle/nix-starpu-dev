@@ -10,7 +10,7 @@ TARGETS = main
 all: $(TARGETS)
 
 run: $(TARGETS)
-	./main 1
+	./main 4
 
 clean:
 	rm -f $(TARGETS) *.o
