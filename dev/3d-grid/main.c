@@ -91,11 +91,70 @@ struct cl_args* make_cl_args(uint32_t i, uint32_t j, uint32_t k, uint32_t t){
 }
 
 void average_filter(void *descr[], void *cl_args){
+
+    struct cl_args* args = (struct cl_args*) cl_args;
+    const uint32_t i = args->i;
+    const uint32_t j = args->j;
+    const uint32_t k = args->k;
+
     double* block_w = (double*) STARPU_BLOCK_GET_PTR( descr[0] );
     double* block_r = (double*) STARPU_BLOCK_GET_PTR( descr[1] );
 
-    for(int i = 0; i < CUBE(CUBE_SEGMENT_WIDTH); i++){
-        block_w[i] = block_r[i];
+    // if at the first or last block
+    // star or end a little early to not compute the border
+    const int z_start = FSTBLK(k) ? KERNEL_SIZE : 0;
+    const int z_end = CUBE_SEGMENT_WIDTH - (LSTBLK(k) ? KERNEL_SIZE : 0);
+
+    const int y_start = FSTBLK(j) ? KERNEL_SIZE : 0;
+    const int y_end = CUBE_SEGMENT_WIDTH - (LSTBLK(j) ? KERNEL_SIZE : 0);
+
+    const int x_start = FSTBLK(i) ? KERNEL_SIZE : 0;
+    const int x_end = CUBE_SEGMENT_WIDTH - (LSTBLK(i) ? KERNEL_SIZE : 0);
+
+    for(int z = z_start; z < z_end; z++){
+        for(int y = y_start; y < y_end; y++){
+            for(int x = x_start; x < x_end; x++){
+                double res = 0.0;
+                // TODO: dá pra editar esse código para aumentar a claridade, visto que a conta de indexação
+                // do outro bloco não é muito clara
+                for(int zk = -KERNEL_SIZE; zk <= KERNEL_SIZE; zk++){
+                    if(z + zk < 0){
+                        //index the block where z--
+                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[2]))[CUBE_I(x, y, CUBE_SEGMENT_WIDTH + zk)]; 
+                    }else if(z + zk >= CUBE_SEGMENT_WIDTH){
+                        //index the block where z++
+                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[3]))[CUBE_I(x, y, zk - 1)]; 
+                    }else{
+                        res += block_r[CUBE_I(x, y, z + zk)];
+                    }
+                }
+
+                for(int yk = -KERNEL_SIZE; yk <= KERNEL_SIZE; yk++){
+                    if(y + yk < 0){
+                        //index the block where y--
+                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[4]))[CUBE_I(x, CUBE_SEGMENT_WIDTH + yk, z)]; 
+                    }else if(y + yk >= CUBE_SEGMENT_WIDTH){
+                        //index the block where y++
+                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[5]))[CUBE_I(x, yk - 1, z)]; 
+                    }else{
+                        res += block_r[CUBE_I(x, y + yk, z)];
+                    }
+                }
+
+                for(int xk = -KERNEL_SIZE; xk <= KERNEL_SIZE; xk++){
+                    if(x + xk < 0){
+                        //index the block where y--
+                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[6]))[CUBE_I(CUBE_SEGMENT_WIDTH + xk, y, z)]; 
+                    }else if(x + xk >= CUBE_SEGMENT_WIDTH){
+                        //index the block where y++
+                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[7]))[CUBE_I(xk - 1, y, z)]; 
+                    }else{
+                        res += block_r[CUBE_I(x + xk, y, z)];
+                    }
+                }
+                block_w[CUBE_I(x, y, z)] = res - (2 * block_r[CUBE_I(x, y, z)]);
+            }
+        }
     }
 }
 
@@ -210,7 +269,7 @@ int main(int argc, char **argv){
                     //          |/
                     // -- x -- >
                     // ordem ao invés de rotacional vai ser via eixo,
-                    // blocos do z, depois do y, depois do x
+                    // blocos do z (-1, +1), depois do y, depois do x
                     // no caso primeiro vai o bloco curr, 
                     // depois o central prev e dps o resto na ordem estabelecida
 
@@ -222,7 +281,20 @@ int main(int argc, char **argv){
                     task->modes[1] = STARPU_R;
 
                     int nbuffers = 2;
+
+                    // else add at that position the block itself
+                    #define ADDBLOCKIF(cond, idx) \
+                        task->handles[nbuffers] = (cond) ? prev[idx] : prev[BLOCK_I(i,j,k)]; \
+                        task->modes[nbuffers] = STARPU_R; \
+                        nbuffers++; 
                     
+                    ADDBLOCKIF(!FSTBLK(k), BLOCK_I(i, j, k - 1));
+                    ADDBLOCKIF(!LSTBLK(k), BLOCK_I(i, j, k + 1));
+                    ADDBLOCKIF(!FSTBLK(j), BLOCK_I(i, j - 1, k));
+                    ADDBLOCKIF(!LSTBLK(j), BLOCK_I(i, j + 1, k));
+                    ADDBLOCKIF(!FSTBLK(i), BLOCK_I(i - 1, j, k));
+                    ADDBLOCKIF(!LSTBLK(i), BLOCK_I(i + 1, j, k));
+                    /*
                     #define ADDBLOCK(idx) \
                         task->handles[nbuffers] = prev[idx]; \
                         task->modes[nbuffers] = STARPU_R; \
@@ -245,9 +317,10 @@ int main(int argc, char **argv){
                     }
                     if(!LSTBLK(i)){ //tem o bloco i + 1
                         ADDBLOCK(BLOCK_I(i + 1, j, k));
-                    }
+                    }*/
 
-                    assert(num_of_nighbors + 2 == nbuffers);
+                    //assert(num_of_nighbors + 2 == nbuffers);
+                    assert(nbuffers == 8);
                     task->nbuffers = nbuffers;
 
                     ret = starpu_task_submit(task);
@@ -285,8 +358,6 @@ int main(int argc, char **argv){
                 STARPU_CHECK_RETURN_VALUE(ret, "starpu_data_peek");
 
                 print_block(result_block);
-
-
                 
                 starpu_data_unregister(handle);
             }
