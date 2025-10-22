@@ -266,7 +266,7 @@ int main(int argc, char **argv){
         curr = tmp;
         // when to wait for all?
     }
-
+    printf("Submitted all tasks\n");
     //at least after all iterations
     starpu_task_wait_for_all();
 
@@ -279,11 +279,14 @@ int main(int argc, char **argv){
         for(int j = 0; j < WIDTH_IN_CUBES; j++){
             for(int i = 0; i < WIDTH_IN_CUBES; i++){
                 starpu_data_handle_t handle = result[BLOCK_I(i,j,k)];
-                struct starpu_block_interface* local_interface = starpu_data_get_interface_on_node(handle, STARPU_MAIN_RAM);
-                assert(local_interface != NULL);
+
+                double* result_block = initial_values[BLOCK_I(i,j,k)];
+                int ret = starpu_data_peek(handle, result_block, sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH));
+                STARPU_CHECK_RETURN_VALUE(ret, "starpu_data_peek");
+
+                print_block(result_block);
 
 
-                print_block((double*) STARPU_BLOCK_GET_PTR(local_interface));
                 
                 starpu_data_unregister(handle);
             }
