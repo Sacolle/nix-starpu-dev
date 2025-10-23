@@ -47,22 +47,52 @@ void print_block(double* block){
         printf("]\n");
     }
 }
+
+#define START(blk, idx) (FSTBLK(blk) && (idx) < KERNEL_SIZE)
+#define END(blk, idx) (LSTBLK(blk) && (idx) >= (CUBE_SEGMENT_WIDTH - KERNEL_SIZE))
+#define INEDGE(blk_idx, cidx) (START(blk_idx, cidx) || END(blk_idx, cidx))
 //initialize block, the border consists of value 0.0
 void initialize_block(double* block, int i, int j, int k){
     for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
         for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
             for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
-
-                #define START(blk, idx) (FSTBLK(blk) && (idx) < KERNEL_SIZE)
-                #define END(blk, idx) (LSTBLK(blk) && (idx) >= (CUBE_SEGMENT_WIDTH - KERNEL_SIZE))
-                #define INEDGE(blk_idx, cidx) (START(blk_idx, cidx) || END(blk_idx, cidx))
-
-                //TODO: validate
                 //if it starts or ends in an edge, set to 0
                 if( INEDGE(k, z) || INEDGE(j, y) || INEDGE(i, x)){
                     block[CUBE_I(x, y, z)] = 0.0;
                 }else{
                     block[CUBE_I(x, y, z)] = 10.0 * ((double) rand() / RAND_MAX);
+                }
+            }
+        }
+    }
+}
+
+void clear_block(double* block){
+    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
+        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
+            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
+                    block[CUBE_I(x, y, z)] = 0.0;
+            }
+        }
+    }
+}
+
+void clear_pointers(starpu_data_handle_t* list){
+    for(int i = 0; i < CUBE(WIDTH_IN_CUBES); i++){
+        list[i] = NULL;
+    }
+}
+
+#define EPSILON 0.0001
+
+void assert_block_clear_edge(double* block, int i, int j, int k){
+    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
+        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
+            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
+                const int idx = CUBE_I(x, y, z);
+                if( INEDGE(k, z) || INEDGE(j, y) || INEDGE(i, x)){
+                    assert(block[idx] < EPSILON);
+                    assert(block[idx] > -EPSILON);
                 }
             }
         }
@@ -97,65 +127,67 @@ void average_filter(void *descr[], void *cl_args){
     const uint32_t j = args->j;
     const uint32_t k = args->k;
 
-    double* block_w = (double*) STARPU_BLOCK_GET_PTR( descr[0] );
-    double* block_r = (double*) STARPU_BLOCK_GET_PTR( descr[1] );
+    double *const block_w = (double*) STARPU_BLOCK_GET_PTR( descr[0] );
+    double *const block_r = (double*) STARPU_BLOCK_GET_PTR( descr[1] );
 
-    // if at the first or last block
-    // star or end a little early to not compute the border
-    const int z_start = FSTBLK(k) ? KERNEL_SIZE : 0;
-    const int z_end = CUBE_SEGMENT_WIDTH - (LSTBLK(k) ? KERNEL_SIZE : 0);
+    double *const z_minus = (double*) STARPU_BLOCK_GET_PTR( descr[2] );
+    double *const z_plus = (double*) STARPU_BLOCK_GET_PTR( descr[3] );
 
-    const int y_start = FSTBLK(j) ? KERNEL_SIZE : 0;
-    const int y_end = CUBE_SEGMENT_WIDTH - (LSTBLK(j) ? KERNEL_SIZE : 0);
+    double *const y_minus = (double*) STARPU_BLOCK_GET_PTR( descr[4] );
+    double *const y_plus = (double*) STARPU_BLOCK_GET_PTR( descr[5] );
 
-    const int x_start = FSTBLK(i) ? KERNEL_SIZE : 0;
-    const int x_end = CUBE_SEGMENT_WIDTH - (LSTBLK(i) ? KERNEL_SIZE : 0);
+    double *const x_minus = (double*) STARPU_BLOCK_GET_PTR( descr[6] );
+    double *const x_plus = (double*) STARPU_BLOCK_GET_PTR( descr[7] );
 
-    for(int z = z_start; z < z_end; z++){
-        for(int y = y_start; y < y_end; y++){
-            for(int x = x_start; x < x_end; x++){
-                double res = 0.0;
-                // TODO: dá pra editar esse código para aumentar a claridade, visto que a conta de indexação
-                // do outro bloco não é muito clara
-                for(int zk = -KERNEL_SIZE; zk <= KERNEL_SIZE; zk++){
-                    if(z + zk < 0){
-                        //index the block where z--
-                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[2]))[CUBE_I(x, y, CUBE_SEGMENT_WIDTH + zk)]; 
-                    }else if(z + zk >= CUBE_SEGMENT_WIDTH){
-                        //index the block where z++
-                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[3]))[CUBE_I(x, y, zk - 1)]; 
-                    }else{
-                        res += block_r[CUBE_I(x, y, z + zk)];
+    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
+        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
+            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
+                // need to set the border to 0, because the cube might contain tash data
+                if( INEDGE(k, z) || INEDGE(j, y) || INEDGE(i, x)){
+                    block_w[CUBE_I(x,y,z)] = 0.0;
+                }else {
+                    double res = 0.0;
+                    for(int k = -KERNEL_SIZE; k <= KERNEL_SIZE; k++){ 
+                        const int cell_idx = z + k; 
+                        
+                        if(cell_idx < 0){ 
+                            res += z_minus[CUBE_I(x, y, CUBE_SEGMENT_WIDTH + cell_idx)]; 
+                        }else if(cell_idx >= CUBE_SEGMENT_WIDTH){ 
+                            res += z_plus[CUBE_I(x, y, cell_idx - CUBE_SEGMENT_WIDTH)]; 
+                        }else{ 
+                            res += block_r[CUBE_I(x, y, cell_idx)]; 
+                        } 
                     }
-                }
 
-                for(int yk = -KERNEL_SIZE; yk <= KERNEL_SIZE; yk++){
-                    if(y + yk < 0){
-                        //index the block where y--
-                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[4]))[CUBE_I(x, CUBE_SEGMENT_WIDTH + yk, z)]; 
-                    }else if(y + yk >= CUBE_SEGMENT_WIDTH){
-                        //index the block where y++
-                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[5]))[CUBE_I(x, yk - 1, z)]; 
-                    }else{
-                        res += block_r[CUBE_I(x, y + yk, z)];
+                    for(int k = -KERNEL_SIZE; k <= KERNEL_SIZE; k++){ 
+                        const int cell_idx = y + k; 
+                        if(cell_idx < 0){ 
+                            res += y_minus[CUBE_I(x, CUBE_SEGMENT_WIDTH + cell_idx, z)]; 
+                        }else if(cell_idx >= CUBE_SEGMENT_WIDTH){ 
+                            res += y_plus[CUBE_I(x, cell_idx - CUBE_SEGMENT_WIDTH, z)]; 
+                        }else{ 
+                            res += block_r[CUBE_I(x, cell_idx, z)]; 
+                        } 
                     }
-                }
 
-                for(int xk = -KERNEL_SIZE; xk <= KERNEL_SIZE; xk++){
-                    if(x + xk < 0){
-                        //index the block where y--
-                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[6]))[CUBE_I(CUBE_SEGMENT_WIDTH + xk, y, z)]; 
-                    }else if(x + xk >= CUBE_SEGMENT_WIDTH){
-                        //index the block where y++
-                        res += ((double*) STARPU_BLOCK_GET_PTR(descr[7]))[CUBE_I(xk - 1, y, z)]; 
-                    }else{
-                        res += block_r[CUBE_I(x + xk, y, z)];
+                    for(int k = -KERNEL_SIZE; k <= KERNEL_SIZE; k++){ 
+                        const int cell_idx = x + k; 
+                        if(cell_idx < 0){ 
+                            res += x_minus[CUBE_I(CUBE_SEGMENT_WIDTH + cell_idx, y, z)]; 
+                        }else if(cell_idx >= CUBE_SEGMENT_WIDTH){ 
+                            res += x_plus[CUBE_I(cell_idx - CUBE_SEGMENT_WIDTH, y, z)]; 
+                        }else{ 
+                            res += block_r[CUBE_I(cell_idx, y, z)]; 
+                        } 
                     }
+                        
+                    block_w[CUBE_I(x, y, z)] = (res - (2 * block_r[CUBE_I(x, y, z)])) / 25.0;
                 }
-                block_w[CUBE_I(x, y, z)] = res - (2 * block_r[CUBE_I(x, y, z)]);
             }
         }
     }
+    assert_block_clear_edge(block_w, i, j, k);
+
 }
 
 int main(int argc, char **argv){
@@ -178,6 +210,7 @@ int main(int argc, char **argv){
     // também é necessário o bloco(x,y,z,t-1)
     // agora ao invés de um blocão, os blocos seram disjuntos
     starpu_data_handle_t* prev = (starpu_data_handle_t*) malloc(sizeof(starpu_data_handle_t) * CUBE(WIDTH_IN_CUBES));
+    clear_pointers(prev);
 
     // need this because the starpu automatic alocation happens on demand
     // an if can be used to free this at the end of the code or after the first iteration
@@ -199,9 +232,9 @@ int main(int argc, char **argv){
                 double* allocated_block = (double*) malloc(sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH));
                 initialize_block(allocated_block, i, j, k);
 
-                initial_values[BLOCK_I(i, j, k)] = allocated_block;
-
                 //print_block(allocated_block);
+
+                initial_values[BLOCK_I(i, j, k)] = allocated_block;
 
                 //let starpu allocate the data by setting home_node = -1 
                 //problem: the data is only alocated when writen with STARPU_W
@@ -222,7 +255,7 @@ int main(int argc, char **argv){
     }
 
     starpu_data_handle_t* curr = (starpu_data_handle_t*) malloc(sizeof(starpu_data_handle_t) * CUBE(WIDTH_IN_CUBES));
-
+    clear_pointers(curr);
 
     for(int t = 0; t < iterations; t++){
         for(int k = 0; k < WIDTH_IN_CUBES; k++){
@@ -294,30 +327,6 @@ int main(int argc, char **argv){
                     ADDBLOCKIF(!LSTBLK(j), BLOCK_I(i, j + 1, k));
                     ADDBLOCKIF(!FSTBLK(i), BLOCK_I(i - 1, j, k));
                     ADDBLOCKIF(!LSTBLK(i), BLOCK_I(i + 1, j, k));
-                    /*
-                    #define ADDBLOCK(idx) \
-                        task->handles[nbuffers] = prev[idx]; \
-                        task->modes[nbuffers] = STARPU_R; \
-                        nbuffers++;
-
-                    if(!FSTBLK(k)){ // tem o bloco k - 1
-                        ADDBLOCK(BLOCK_I(i, j, k - 1));
-                    }
-                    if(!LSTBLK(k)){ //tem o bloco k + 1
-                        ADDBLOCK(BLOCK_I(i, j, k + 1));
-                    }
-                    if(!FSTBLK(j)){ // tem o bloco j - 1
-                        ADDBLOCK(BLOCK_I(i, j - 1, k));
-                    }
-                    if(!LSTBLK(j)){ //tem o bloco j + 1
-                        ADDBLOCK(BLOCK_I(i, j + 1, k));
-                    }
-                    if(!FSTBLK(i)){ // tem o bloco i - 1
-                        ADDBLOCK(BLOCK_I(i - 1, j, k));
-                    }
-                    if(!LSTBLK(i)){ //tem o bloco i + 1
-                        ADDBLOCK(BLOCK_I(i + 1, j, k));
-                    }*/
 
                     //assert(num_of_nighbors + 2 == nbuffers);
                     assert(nbuffers == 8);
@@ -337,6 +346,8 @@ int main(int argc, char **argv){
         starpu_data_handle_t* tmp = prev;
         prev = curr;
         curr = tmp;
+        //write on a clear curr
+        clear_pointers(curr);
         // when to wait for all?
     }
     printf("Submitted all tasks\n");
@@ -348,17 +359,30 @@ int main(int argc, char **argv){
 
     //output the results in curr
     //desregistra os blocos e limpa as tasks
+    double* result_block = (double*) malloc(sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH));
+    clear_block(result_block);
+
     for(int k = 0; k < WIDTH_IN_CUBES; k++){
         for(int j = 0; j < WIDTH_IN_CUBES; j++){
             for(int i = 0; i < WIDTH_IN_CUBES; i++){
                 starpu_data_handle_t handle = result[BLOCK_I(i,j,k)];
 
-                double* result_block = initial_values[BLOCK_I(i,j,k)];
-                int ret = starpu_data_peek(handle, result_block, sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH));
+                // first need to acquire the data
+                starpu_data_acquire(handle, STARPU_R);
+                //double* result_block = initial_values[BLOCK_I(i,j,k)];
+                starpu_ssize_t og_size = sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH);
+                starpu_ssize_t size = og_size;
+                int ret = starpu_data_pack(handle, (void**)&result_block, &size);
+                assert(og_size == size);
                 STARPU_CHECK_RETURN_VALUE(ret, "starpu_data_peek");
 
                 print_block(result_block);
-                
+
+               //assert_block_clear_edge(result_block, i, j, k);
+
+                clear_block(result_block);
+                //then release
+                starpu_data_release(handle);
                 starpu_data_unregister(handle);
             }
         }
