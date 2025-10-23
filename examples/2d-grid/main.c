@@ -336,10 +336,10 @@ int main(int argc, char **argv){
             task->starpu_task[0] = starpu_task_create();
             task->starpu_task[1] = starpu_task_create();
 
-            sprintf(task->nameA, "b(%d, %d)A", i, j);
+            sprintf(task->nameA, "b_%d-%d_A", i, j);
             task->starpu_task[0]->name = task->nameA;
 
-            sprintf(task->nameB, "b(%d, %d)B", i, j);
+            sprintf(task->nameB, "b_%d-%d_B", i, j);
             task->starpu_task[1]->name = task->nameB;
 
             task->params.block_width = block_size;
