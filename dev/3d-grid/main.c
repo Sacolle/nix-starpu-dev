@@ -41,17 +41,9 @@ void print_block(double* block){
                     printf(", ");
                 }
             }
-            if(y != g_cube_width - 1){
-                printf("],\n");
-            }else{
-                printf("]\n");
-            }
+            if(y != g_cube_width - 1){ printf("],\n"); }else{ printf("]\n"); }
         }
-        if(z != g_cube_width - 1){
-            printf("],\n");
-        }else{
-            printf("]\n");
-        }
+        if(z != g_cube_width - 1){ printf("],\n"); }else{ printf("]\n"); }
     }
     printf("]");
 }
@@ -108,7 +100,7 @@ void assert_block_clear_edge(double* block, int i, int j, int k){
 }
 
 struct cl_args {
-    char name[48];
+    char name[64];
     uint32_t i;
     uint32_t j;
     uint32_t k;
@@ -218,10 +210,19 @@ int main(int argc, char **argv){
   
     struct starpu_codelet avrg_filter_cl = {
         .cpu_funcs = { average_filter },
-        .nbuffers = STARPU_VARIABLE_NBUFFERS, 
+        .nbuffers = 8,
+        .modes = {
+            STARPU_W, // write cell at CUBE_I(x, y, z) at t
+            STARPU_R, // read cell at CUBE_I(x, y, z) at t - 1
+            STARPU_R, // read cell at CUBE_I(x, y, z - 1) at t - 1
+            STARPU_R, // read cell at CUBE_I(x, y, z + 1) at t - 1
+            STARPU_R, // read cell at CUBE_I(x, y - 1, z) at t - 1
+            STARPU_R, // read cell at CUBE_I(x, y + 1, z) at t - 1
+            STARPU_R, // read cell at CUBE_I(x - 1, y, z) at t - 1
+            STARPU_R  // read cell at CUBE_I(x + 1, y, z) at t - 1
+        },
         .model = &starpu_perfmodel_nop,
     };
-
 	int ret = starpu_init(NULL);
 	STARPU_CHECK_RETURN_VALUE(ret, "starpu_init");
 
@@ -238,22 +239,11 @@ int main(int argc, char **argv){
     double* initial_values[CUBE(g_width_in_cubes)];
 
     for(int k = 0; k < g_width_in_cubes; k++){
-        const int neighbors_z_axis = ((k == 0) || (k == g_width_in_cubes - 1)) ? 1 : 2;
-
         for(int j = 0; j < g_width_in_cubes; j++){
-            const int neighbors_y_axis = ((j == 0) || (j == g_width_in_cubes - 1)) ? 1 : 2;
-
             for(int i = 0; i < g_width_in_cubes; i++){
-                const int neighbors_x_axis = ((i == 0) || (i == g_width_in_cubes - 1)) ? 1 : 2;
-
-                const int num_of_nighbors = neighbors_x_axis + neighbors_y_axis + neighbors_z_axis;
-                //cada vizinho e ele mesmo vai precisar usar
 
                 double* allocated_block = (double*) malloc(sizeof(double) * CUBE(g_cube_width));
                 initialize_block(allocated_block, i, j, k);
-
-                //print_block(allocated_block);
-
                 initial_values[BLOCK_I(i, j, k)] = allocated_block;
 
                 //let starpu allocate the data by setting home_node = -1 
@@ -269,7 +259,6 @@ int main(int argc, char **argv){
                 );
                 // assert that its properly registered
                 assert(prev[BLOCK_I(i,j,k)] != NULL);
-                assert(starpu_data_get_local_ptr(prev[BLOCK_I(i,j,k)]) != NULL);
             }
         }
     }
@@ -280,20 +269,13 @@ int main(int argc, char **argv){
     for(int t = 0; t < g_iterations; t++){
         starpu_iteration_push(t);
         for(int k = 0; k < g_width_in_cubes; k++){
-            const int neighbors_z_axis = ((k == 0) || (k == g_width_in_cubes - 1)) ? 1 : 2;
-
             for(int j = 0; j < g_width_in_cubes; j++){
-                const int neighbors_y_axis = ((j == 0) || (j == g_width_in_cubes - 1)) ? 1 : 2;
-
                 for(int i = 0; i < g_width_in_cubes; i++){
-                    const int neighbors_x_axis = ((i == 0) || (i == g_width_in_cubes - 1)) ? 1 : 2;
 
-                    const int num_of_nighbors = neighbors_x_axis + neighbors_y_axis + neighbors_z_axis;
-                    //cada vizinho e ele mesmo vai precisar usar
-
+                    const int idx = BLOCK_I(i, j, k);
                     //add to the curr buff
                     //let starpu allocate the data by setting home_node = -1 
-                    starpu_block_data_register(&curr[BLOCK_I(i, j, k)], -1, 0,
+                    starpu_block_data_register(&curr[idx], -1, 0,
                         g_cube_width, SQUARE(g_cube_width),
                         g_cube_width, g_cube_width, g_cube_width, 
                         sizeof(double)
@@ -328,30 +310,20 @@ int main(int argc, char **argv){
                     // depois o central prev e dps o resto na ordem estabelecida
 
                     // buffers iniciais
-                    task->handles[0] = curr[BLOCK_I(i, j, k)]; 
-                    task->modes[0] = STARPU_W;
-
-                    task->handles[1] = prev[BLOCK_I(i, j, k)];
-                    task->modes[1] = STARPU_R;
-
-                    int nbuffers = 2;
-
-                    // else add at that position the block itself
-                    #define ADDBLOCKIF(cond, idx) \
-                        task->handles[nbuffers] = (cond) ? prev[idx] : prev[BLOCK_I(i,j,k)]; \
-                        task->modes[nbuffers] = STARPU_R; \
-                        nbuffers++; 
-                    
-                    ADDBLOCKIF(!FSTBLK(k), BLOCK_I(i, j, k - 1));
-                    ADDBLOCKIF(!LSTBLK(k), BLOCK_I(i, j, k + 1));
-                    ADDBLOCKIF(!FSTBLK(j), BLOCK_I(i, j - 1, k));
-                    ADDBLOCKIF(!LSTBLK(j), BLOCK_I(i, j + 1, k));
-                    ADDBLOCKIF(!FSTBLK(i), BLOCK_I(i - 1, j, k));
-                    ADDBLOCKIF(!LSTBLK(i), BLOCK_I(i + 1, j, k));
-
-                    //assert(num_of_nighbors + 2 == nbuffers);
-                    assert(nbuffers == 8);
-                    task->nbuffers = nbuffers;
+                    task->handles[0] = curr[idx]; 
+                    task->handles[1] = prev[idx];
+                    // se for o primeiro bloco da direção k, 
+                    // não usará este handle, mas tem que passar um buffer válido, então passa o central
+                    // se não for o primeiro bloco, passa o bloco anterior a esse, que será acessado
+                    task->handles[2] = FSTBLK(k) ? prev[idx] : prev[BLOCK_I(i, j, k - 1)];
+                    // repete só que caso haja o último bloco, e se existir passa o seguite a esse
+                    task->handles[3] = LSTBLK(k) ? prev[idx] : prev[BLOCK_I(i, j, k + 1)];
+                    // primeiro e último para eixo y
+                    task->handles[4] = FSTBLK(j) ? prev[idx] : prev[BLOCK_I(i, j - 1, k)];
+                    task->handles[5] = LSTBLK(j) ? prev[idx] : prev[BLOCK_I(i, j + 1, k)];
+                    // primeiro e último para eixo x
+                    task->handles[6] = FSTBLK(i) ? prev[idx] : prev[BLOCK_I(i - 1, j, k)];
+                    task->handles[7] = LSTBLK(i) ? prev[idx] : prev[BLOCK_I(i + 1, j, k)];
 
                     ret = starpu_task_submit(task);
                     //printf("iter: %d\n, %s", ++iter,t->name);
@@ -398,7 +370,7 @@ int main(int argc, char **argv){
                 assert(og_size == size);
                 STARPU_CHECK_RETURN_VALUE(ret, "starpu_data_peek");
 
-                print_block(result_block);
+                //print_block(result_block);
 
                //assert_block_clear_edge(result_block, i, j, k);
 
@@ -406,6 +378,8 @@ int main(int argc, char **argv){
                 //then release
                 starpu_data_release(handle);
                 starpu_data_unregister(handle);
+
+                free(initial_values[BLOCK_I(i,j,k)]);
             }
         }
     }
