@@ -4,44 +4,66 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-const int BASE_VOLUME_WIDTH = 761;
-const int CUBE_SEGMENT_WIDTH = 85;
+//TODO: testar essas globais na execução
+
 const int KERNEL_SIZE = 4;
-const int VOLUME_WIDTH = (BASE_VOLUME_WIDTH + KERNEL_SIZE);
-const int WIDTH_IN_CUBES = (VOLUME_WIDTH / CUBE_SEGMENT_WIDTH);
+// number of iterations
+static int g_iterations;
+// width for the volume of the whole sistem
+static int g_volume_width;
+// amount of segments in a dimension. 
+// if g_volume_width = 100 and g_width_in_cubes = 10
+// there are 10 segmentations by dimension, resulting in 1000 total cubes of 
+// volume 1000
+static int g_width_in_cubes;
+// width for the segmented cube
+static int g_cube_width;
 
 // linear idx https://stackoverflow.com/a/34363187
-#define CUBE_I(x, y, z) ((x) + ((y) * CUBE_SEGMENT_WIDTH) + ((z) * CUBE_SEGMENT_WIDTH * CUBE_SEGMENT_WIDTH))
-#define BLOCK_I(i, j, k) ((i) + ((j) * WIDTH_IN_CUBES) + ((k) * WIDTH_IN_CUBES * WIDTH_IN_CUBES))
+#define CUBE_I(x, y, z) ((x) + ((y) * g_cube_width) + ((z) * g_cube_width * g_cube_width))
+#define BLOCK_I(i, j, k) ((i) + ((j) * g_width_in_cubes) + ((k) * g_width_in_cubes * g_width_in_cubes))
 #define SQUARE(x) ((x)*(x))
 #define CUBE(x) ((x)*(x)*(x))
 
 
 #define FSTBLK(blk) ((blk) == 0)
-#define LSTBLK(blk) ((blk) == (WIDTH_IN_CUBES - 1))
+#define LSTBLK(blk) ((blk) == (g_width_in_cubes - 1))
 
 void print_block(double* block){
-    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
+    printf("[\n");
+    for(int z = 0; z < g_cube_width; z++){
         printf("[\n");
-        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
+        for(int y = 0; y < g_cube_width; y++){
             printf("\t[");
-            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
-                printf("%.2f, ", block[CUBE_I(x, y, z)]);
+            for(int x = 0; x < g_cube_width; x++){
+                printf("%.2f", block[CUBE_I(x, y, z)]);
+                if(x != g_cube_width - 1){
+                    printf(", ");
+                }
             }
+            if(y != g_cube_width - 1){
+                printf("],\n");
+            }else{
+                printf("]\n");
+            }
+        }
+        if(z != g_cube_width - 1){
+            printf("],\n");
+        }else{
             printf("]\n");
         }
-        printf("]\n");
     }
+    printf("]");
 }
 
 #define START(blk, idx) (FSTBLK(blk) && (idx) < KERNEL_SIZE)
-#define END(blk, idx) (LSTBLK(blk) && (idx) >= (CUBE_SEGMENT_WIDTH - KERNEL_SIZE))
+#define END(blk, idx) (LSTBLK(blk) && (idx) >= (g_cube_width - KERNEL_SIZE))
 #define INEDGE(blk_idx, cidx) (START(blk_idx, cidx) || END(blk_idx, cidx))
 //initialize block, the border consists of value 0.0
 void initialize_block(double* block, int i, int j, int k){
-    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
-        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
-            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
+    for(int z = 0; z < g_cube_width; z++){
+        for(int y = 0; y < g_cube_width; y++){
+            for(int x = 0; x < g_cube_width; x++){
                 //if it starts or ends in an edge, set to 0
                 if( INEDGE(k, z) || INEDGE(j, y) || INEDGE(i, x)){
                     block[CUBE_I(x, y, z)] = 0.0;
@@ -54,9 +76,9 @@ void initialize_block(double* block, int i, int j, int k){
 }
 
 void clear_block(double* block){
-    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
-        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
-            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
+    for(int z = 0; z < g_cube_width; z++){
+        for(int y = 0; y < g_cube_width; y++){
+            for(int x = 0; x < g_cube_width; x++){
                     block[CUBE_I(x, y, z)] = 0.0;
             }
         }
@@ -64,7 +86,7 @@ void clear_block(double* block){
 }
 
 void clear_pointers(starpu_data_handle_t* list){
-    for(int i = 0; i < CUBE(WIDTH_IN_CUBES); i++){
+    for(int i = 0; i < CUBE(g_width_in_cubes); i++){
         list[i] = NULL;
     }
 }
@@ -72,9 +94,9 @@ void clear_pointers(starpu_data_handle_t* list){
 #define EPSILON 0.0001
 
 void assert_block_clear_edge(double* block, int i, int j, int k){
-    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
-        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
-            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
+    for(int z = 0; z < g_cube_width; z++){
+        for(int y = 0; y < g_cube_width; y++){
+            for(int x = 0; x < g_cube_width; x++){
                 const int idx = CUBE_I(x, y, z);
                 if( INEDGE(k, z) || INEDGE(j, y) || INEDGE(i, x)){
                     assert(block[idx] < EPSILON);
@@ -125,9 +147,9 @@ void average_filter(void *descr[], void *cl_args){
     double *const x_minus = (double*) STARPU_BLOCK_GET_PTR( descr[6] );
     double *const x_plus = (double*) STARPU_BLOCK_GET_PTR( descr[7] );
 
-    for(int z = 0; z < CUBE_SEGMENT_WIDTH; z++){
-        for(int y = 0; y < CUBE_SEGMENT_WIDTH; y++){
-            for(int x = 0; x < CUBE_SEGMENT_WIDTH; x++){
+    for(int z = 0; z < g_cube_width; z++){
+        for(int y = 0; y < g_cube_width; y++){
+            for(int x = 0; x < g_cube_width; x++){
                 // need to set the border to 0, because the cube might contain tash data
                 if( INEDGE(k, z) || INEDGE(j, y) || INEDGE(i, x)){
                     block_w[CUBE_I(x,y,z)] = 0.0;
@@ -137,9 +159,9 @@ void average_filter(void *descr[], void *cl_args){
                         const int cell_idx = z + k; 
                         
                         if(cell_idx < 0){ 
-                            res += z_minus[CUBE_I(x, y, CUBE_SEGMENT_WIDTH + cell_idx)]; 
-                        }else if(cell_idx >= CUBE_SEGMENT_WIDTH){ 
-                            res += z_plus[CUBE_I(x, y, cell_idx - CUBE_SEGMENT_WIDTH)]; 
+                            res += z_minus[CUBE_I(x, y, g_cube_width + cell_idx)]; 
+                        }else if(cell_idx >= g_cube_width){ 
+                            res += z_plus[CUBE_I(x, y, cell_idx - g_cube_width)]; 
                         }else{ 
                             res += block_r[CUBE_I(x, y, cell_idx)]; 
                         } 
@@ -148,9 +170,9 @@ void average_filter(void *descr[], void *cl_args){
                     for(int k = -KERNEL_SIZE; k <= KERNEL_SIZE; k++){ 
                         const int cell_idx = y + k; 
                         if(cell_idx < 0){ 
-                            res += y_minus[CUBE_I(x, CUBE_SEGMENT_WIDTH + cell_idx, z)]; 
-                        }else if(cell_idx >= CUBE_SEGMENT_WIDTH){ 
-                            res += y_plus[CUBE_I(x, cell_idx - CUBE_SEGMENT_WIDTH, z)]; 
+                            res += y_minus[CUBE_I(x, g_cube_width + cell_idx, z)]; 
+                        }else if(cell_idx >= g_cube_width){ 
+                            res += y_plus[CUBE_I(x, cell_idx - g_cube_width, z)]; 
                         }else{ 
                             res += block_r[CUBE_I(x, cell_idx, z)]; 
                         } 
@@ -159,9 +181,9 @@ void average_filter(void *descr[], void *cl_args){
                     for(int k = -KERNEL_SIZE; k <= KERNEL_SIZE; k++){ 
                         const int cell_idx = x + k; 
                         if(cell_idx < 0){ 
-                            res += x_minus[CUBE_I(CUBE_SEGMENT_WIDTH + cell_idx, y, z)]; 
-                        }else if(cell_idx >= CUBE_SEGMENT_WIDTH){ 
-                            res += x_plus[CUBE_I(cell_idx - CUBE_SEGMENT_WIDTH, y, z)]; 
+                            res += x_minus[CUBE_I(g_cube_width + cell_idx, y, z)]; 
+                        }else if(cell_idx >= g_cube_width){ 
+                            res += x_plus[CUBE_I(cell_idx - g_cube_width, y, z)]; 
                         }else{ 
                             res += block_r[CUBE_I(cell_idx, y, z)]; 
                         } 
@@ -176,12 +198,22 @@ void average_filter(void *descr[], void *cl_args){
 
 }
 
-int main(int argc, char **argv){
-  if (VOLUME_WIDTH % CUBE_SEGMENT_WIDTH != 0) {
-    fprintf(stderr, "A largura do volume + kernel size devem ser divisíveis pela largura do segmento.\n");
-    return 1;
-  }
 
+int main(int argc, char **argv){
+
+    //get global parâmeters
+	assert(argc >= 4);
+
+	g_iterations = atoi(argv[1]);
+    assert(g_iterations > 0);
+
+	g_volume_width = atoi(argv[2]);
+	g_width_in_cubes = atoi(argv[3]);
+    // the number of segments divides the total volume
+    assert((g_volume_width % g_width_in_cubes == 0) && 
+        "A largura do volume + kernel size devem ser divisíveis pela largura do segmento.\n");
+
+	g_cube_width = g_volume_width / g_width_in_cubes;
 
   
     struct starpu_codelet avrg_filter_cl = {
@@ -193,35 +225,31 @@ int main(int argc, char **argv){
 	int ret = starpu_init(NULL);
 	STARPU_CHECK_RETURN_VALUE(ret, "starpu_init");
 
-	assert(argc > 0);
-	const int iterations = atoi(argv[1]);
-    assert(iterations > 0);
-
 
     // é necessário inicializar duas matrizes iniciais, pois para computar o bloco(x,y,z,t)
     // também é necessário o bloco(x,y,z,t-1)
     // agora ao invés de um blocão, os blocos seram disjuntos
-    starpu_data_handle_t* prev = (starpu_data_handle_t*) malloc(sizeof(starpu_data_handle_t) * CUBE(WIDTH_IN_CUBES));
+    starpu_data_handle_t* prev = (starpu_data_handle_t*) malloc(sizeof(starpu_data_handle_t) * CUBE(g_width_in_cubes));
     clear_pointers(prev);
 
     // need this because the starpu automatic alocation happens on demand
     // an if can be used to free this at the end of the code or after the first iteration
     // rn it is left as a TODO: free this sometime
-    double* initial_values[CUBE(WIDTH_IN_CUBES)];
+    double* initial_values[CUBE(g_width_in_cubes)];
 
-    for(int k = 0; k < WIDTH_IN_CUBES; k++){
-        const int neighbors_z_axis = ((k == 0) || (k == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+    for(int k = 0; k < g_width_in_cubes; k++){
+        const int neighbors_z_axis = ((k == 0) || (k == g_width_in_cubes - 1)) ? 1 : 2;
 
-        for(int j = 0; j < WIDTH_IN_CUBES; j++){
-            const int neighbors_y_axis = ((j == 0) || (j == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+        for(int j = 0; j < g_width_in_cubes; j++){
+            const int neighbors_y_axis = ((j == 0) || (j == g_width_in_cubes - 1)) ? 1 : 2;
 
-            for(int i = 0; i < WIDTH_IN_CUBES; i++){
-                const int neighbors_x_axis = ((i == 0) || (i == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+            for(int i = 0; i < g_width_in_cubes; i++){
+                const int neighbors_x_axis = ((i == 0) || (i == g_width_in_cubes - 1)) ? 1 : 2;
 
                 const int num_of_nighbors = neighbors_x_axis + neighbors_y_axis + neighbors_z_axis;
                 //cada vizinho e ele mesmo vai precisar usar
 
-                double* allocated_block = (double*) malloc(sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH));
+                double* allocated_block = (double*) malloc(sizeof(double) * CUBE(g_cube_width));
                 initialize_block(allocated_block, i, j, k);
 
                 //print_block(allocated_block);
@@ -234,9 +262,9 @@ int main(int argc, char **argv){
                 //so the first iterations need to allocate the memory manually
                 starpu_block_data_register(&prev[BLOCK_I(i,j,k)], STARPU_MAIN_RAM, (uintptr_t) allocated_block, 
                     //stride for y      stride for z
-                    CUBE_SEGMENT_WIDTH, SQUARE(CUBE_SEGMENT_WIDTH),
+                    g_cube_width, SQUARE(g_cube_width),
                     // width             height             depth
-                    CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, 
+                    g_cube_width, g_cube_width, g_cube_width, 
                     sizeof(double)
                 );
                 // assert that its properly registered
@@ -246,19 +274,19 @@ int main(int argc, char **argv){
         }
     }
 
-    starpu_data_handle_t* curr = (starpu_data_handle_t*) malloc(sizeof(starpu_data_handle_t) * CUBE(WIDTH_IN_CUBES));
+    starpu_data_handle_t* curr = (starpu_data_handle_t*) malloc(sizeof(starpu_data_handle_t) * CUBE(g_width_in_cubes));
     clear_pointers(curr);
 
-    for(int t = 0; t < iterations; t++){
+    for(int t = 0; t < g_iterations; t++){
         starpu_iteration_push(t);
-        for(int k = 0; k < WIDTH_IN_CUBES; k++){
-            const int neighbors_z_axis = ((k == 0) || (k == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+        for(int k = 0; k < g_width_in_cubes; k++){
+            const int neighbors_z_axis = ((k == 0) || (k == g_width_in_cubes - 1)) ? 1 : 2;
 
-            for(int j = 0; j < WIDTH_IN_CUBES; j++){
-                const int neighbors_y_axis = ((j == 0) || (j == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+            for(int j = 0; j < g_width_in_cubes; j++){
+                const int neighbors_y_axis = ((j == 0) || (j == g_width_in_cubes - 1)) ? 1 : 2;
 
-                for(int i = 0; i < WIDTH_IN_CUBES; i++){
-                    const int neighbors_x_axis = ((i == 0) || (i == WIDTH_IN_CUBES - 1)) ? 1 : 2;
+                for(int i = 0; i < g_width_in_cubes; i++){
+                    const int neighbors_x_axis = ((i == 0) || (i == g_width_in_cubes - 1)) ? 1 : 2;
 
                     const int num_of_nighbors = neighbors_x_axis + neighbors_y_axis + neighbors_z_axis;
                     //cada vizinho e ele mesmo vai precisar usar
@@ -266,8 +294,8 @@ int main(int argc, char **argv){
                     //add to the curr buff
                     //let starpu allocate the data by setting home_node = -1 
                     starpu_block_data_register(&curr[BLOCK_I(i, j, k)], -1, 0,
-                        CUBE_SEGMENT_WIDTH, SQUARE(CUBE_SEGMENT_WIDTH),
-                        CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, CUBE_SEGMENT_WIDTH, 
+                        g_cube_width, SQUARE(g_cube_width),
+                        g_cube_width, g_cube_width, g_cube_width, 
                         sizeof(double)
                     );
 
@@ -280,7 +308,6 @@ int main(int argc, char **argv){
                     assert(cl_args != NULL);
 
                     sprintf(cl_args->name, "[%d, %d, %d, %d]", i, j, k, t + 1);
-                    sprintf(cl_args->name, "avg", i, j, k, t + 1);
                     task->name = cl_args->name;
 
                     task->cl_arg = cl_args;
@@ -333,7 +360,7 @@ int main(int argc, char **argv){
             }
         }
         //TODO: call starpu_unregister_submit aqui para todos os valores em prev
-        for(int ta = 0; ta < CUBE(WIDTH_IN_CUBES); ta++){
+        for(int ta = 0; ta < CUBE(g_width_in_cubes); ta++){
             starpu_data_unregister_submit(prev[ta]);
         }
         //do a swap
@@ -343,7 +370,7 @@ int main(int argc, char **argv){
         //write on a clear curr
         clear_pointers(curr);
         // when to wait for all?
-	starpu_iteration_pop();
+        starpu_iteration_pop();
     }
     printf("Submitted all tasks\n");
     //at least after all iterations
@@ -354,24 +381,24 @@ int main(int argc, char **argv){
 
     //output the results in curr
     //desregistra os blocos e limpa as tasks
-    double* result_block = (double*) malloc(sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH));
+    double* result_block = (double*) malloc(sizeof(double) * CUBE(g_cube_width));
     clear_block(result_block);
 
-    for(int k = 0; k < WIDTH_IN_CUBES; k++){
-        for(int j = 0; j < WIDTH_IN_CUBES; j++){
-            for(int i = 0; i < WIDTH_IN_CUBES; i++){
+    for(int k = 0; k < g_width_in_cubes; k++){
+        for(int j = 0; j < g_width_in_cubes; j++){
+            for(int i = 0; i < g_width_in_cubes; i++){
                 starpu_data_handle_t handle = result[BLOCK_I(i,j,k)];
 
                 // first need to acquire the data
                 starpu_data_acquire(handle, STARPU_R);
                 //double* result_block = initial_values[BLOCK_I(i,j,k)];
-                starpu_ssize_t og_size = sizeof(double) * CUBE(CUBE_SEGMENT_WIDTH);
+                starpu_ssize_t og_size = sizeof(double) * CUBE(g_cube_width);
                 starpu_ssize_t size = og_size;
                 int ret = starpu_data_pack(handle, (void**)&result_block, &size);
                 assert(og_size == size);
                 STARPU_CHECK_RETURN_VALUE(ret, "starpu_data_peek");
 
-                //print_block(result_block);
+                print_block(result_block);
 
                //assert_block_clear_edge(result_block, i, j, k);
 
