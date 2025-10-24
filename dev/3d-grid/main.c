@@ -279,6 +279,7 @@ int main(int argc, char **argv){
                     assert(cl_args != NULL);
 
                     sprintf(cl_args->name, "[%d, %d, %d, %d]", i, j, k, t + 1);
+                    sprintf(cl_args->name, "avg", i, j, k, t + 1);
                     task->name = cl_args->name;
 
                     task->cl_arg = cl_args;
