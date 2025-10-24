@@ -4,25 +4,11 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-#ifndef BASE_VOLUME_WIDTH
-    #define BASE_VOLUME_WIDTH 76
-#endif
-
-#ifndef CUBE_SEGMENT_WIDTH
-    #define CUBE_SEGMENT_WIDTH 8
-#endif
-
-#ifndef KERNEL_SIZE
-    #define KERNEL_SIZE 4
-#endif
-
-#define VOLUME_WIDTH (BASE_VOLUME_WIDTH + KERNEL_SIZE)
-
-#if (VOLUME_WIDTH % CUBE_SEGMENT_WIDTH) != 0
-    #error A largura do volume + kernel size devem ser divisíveis pela largura do segmento.
-#endif
-
-#define WIDTH_IN_CUBES (VOLUME_WIDTH / CUBE_SEGMENT_WIDTH)
+const int BASE_VOLUME_WIDTH = 5000;
+const int CUBE_SEGMENT_WIDTH = 139;
+const int KERNEL_SIZE = 4;
+const int VOLUME_WIDTH = (BASE_VOLUME_WIDTH + KERNEL_SIZE);
+const int WIDTH_IN_CUBES = (VOLUME_WIDTH / CUBE_SEGMENT_WIDTH);
 
 // linear idx https://stackoverflow.com/a/34363187
 #define CUBE_I(x, y, z) ((x) + ((y) * CUBE_SEGMENT_WIDTH) + ((z) * CUBE_SEGMENT_WIDTH * CUBE_SEGMENT_WIDTH))
@@ -191,7 +177,13 @@ void average_filter(void *descr[], void *cl_args){
 }
 
 int main(int argc, char **argv){
+  if (VOLUME_WIDTH % CUBE_SEGMENT_WIDTH != 0) {
+    fprintf(stderr, "A largura do volume + kernel size devem ser divisíveis pela largura do segmento.\n");
+    return 1;
+  }
 
+
+  
     struct starpu_codelet avrg_filter_cl = {
         .cpu_funcs = { average_filter },
         .nbuffers = STARPU_VARIABLE_NBUFFERS, 
