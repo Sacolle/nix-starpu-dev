@@ -4,8 +4,8 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-const int BASE_VOLUME_WIDTH = 500;
-const int CUBE_SEGMENT_WIDTH = 72;
+const int BASE_VOLUME_WIDTH = 761;
+const int CUBE_SEGMENT_WIDTH = 85;
 const int KERNEL_SIZE = 4;
 const int VOLUME_WIDTH = (BASE_VOLUME_WIDTH + KERNEL_SIZE);
 const int WIDTH_IN_CUBES = (VOLUME_WIDTH / CUBE_SEGMENT_WIDTH);
