@@ -4,8 +4,8 @@
 #include <stdatomic.h>
 #include <stdint.h>
 
-const int BASE_VOLUME_WIDTH = 5000;
-const int CUBE_SEGMENT_WIDTH = 139;
+const int BASE_VOLUME_WIDTH = 500;
+const int CUBE_SEGMENT_WIDTH = 72;
 const int KERNEL_SIZE = 4;
 const int VOLUME_WIDTH = (BASE_VOLUME_WIDTH + KERNEL_SIZE);
 const int WIDTH_IN_CUBES = (VOLUME_WIDTH / CUBE_SEGMENT_WIDTH);
@@ -371,7 +371,7 @@ int main(int argc, char **argv){
                 assert(og_size == size);
                 STARPU_CHECK_RETURN_VALUE(ret, "starpu_data_peek");
 
-                print_block(result_block);
+                //print_block(result_block);
 
                //assert_block_clear_edge(result_block, i, j, k);
 
