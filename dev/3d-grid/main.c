@@ -250,6 +250,7 @@ int main(int argc, char **argv){
     clear_pointers(curr);
 
     for(int t = 0; t < iterations; t++){
+        starpu_iteration_push(t);
         for(int k = 0; k < WIDTH_IN_CUBES; k++){
             const int neighbors_z_axis = ((k == 0) || (k == WIDTH_IN_CUBES - 1)) ? 1 : 2;
 
@@ -342,6 +343,7 @@ int main(int argc, char **argv){
         //write on a clear curr
         clear_pointers(curr);
         // when to wait for all?
+	starpu_iteration_pop();
     }
     printf("Submitted all tasks\n");
     //at least after all iterations
