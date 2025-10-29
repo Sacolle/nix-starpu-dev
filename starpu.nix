@@ -22,6 +22,7 @@
 
   # Options
   buildMode ? "debug",
+  maxBuffers ? 8,
   enableSimgrid ? false,
   enableMPI ? false,
   enableCUDA ? false,
@@ -32,6 +33,7 @@ stdenv.mkDerivation (finalAttrs: {
     version = "1.4.7";
 
     inherit buildMode;
+    inherit maxBuffers;
     inherit enableSimgrid;
     inherit enableMPI;
     inherit enableCUDA;
@@ -69,6 +71,8 @@ stdenv.mkDerivation (finalAttrs: {
         (lib.enableFeature true "quick-check")
         (lib.enableFeature false "build-examples")
         (lib.enableFeature finalAttrs.enableSimgrid "simgrid")
+
+        (lib.enableFeature (finalAttrs.maxBuffers != 8) "maxbuffers=${toString finalAttrs.maxBuffers}")
 
          # Static linking is mandatory for smpi
         (lib.enableFeature finalAttrs.enableMPI "mpi")
