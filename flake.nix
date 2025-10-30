@@ -25,10 +25,18 @@
                 # for bash to work properlly inside vscode
                 bashInteractive
                 gdb
+                gcc
                 valgrind
             ];
+            # export StarPU and hwloc store locations 
+            # for use in vscode intellisence
+            GCC_STORE_PATH = "${pkgs.gcc}";
+            STARPU_STORE_PATH = "${pkgs.StarPU}";
+            HWLOC_STORE_PATH = "${pkgs.hwloc.dev}";
+
             shellHook = ''
-              export SHELL=/run/current-system/sw/bin/bash
+                export SHELL=/run/current-system/sw/bin/bash
+                echo Added StarPU, Hwloc and gcc to ENV
             '';
         };
     };
