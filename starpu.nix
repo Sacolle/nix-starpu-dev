@@ -68,7 +68,6 @@ stdenv.mkDerivation (finalAttrs: {
 
     configureFlags = [
         (lib.enableFeature true "quick-check")
-        (lib.enableFeature true "quick-check")
         (lib.enableFeature false "build-examples")
         (lib.enableFeature finalAttrs.enableSimgrid "simgrid")
 
