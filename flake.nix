@@ -9,11 +9,14 @@
     let 
         system = "x86_64-linux";
         starpuOverlay = f: p: {
-            StarPU = p.callPackage ./starpu.nix { };
+            StarPU = p.callPackage ./starpu.nix { enableTrace = true; };
+        };
+        fxtOverlay = f: p: {
+            fxt = p.callPackage ./fxt.nix { static = true; };
         };
         pkgs = import nixpkgs {
             inherit system;
-            overlays = [ starpuOverlay ];
+            overlays = [ starpuOverlay fxtOverlay ];
         };
     in
     {
@@ -37,6 +40,7 @@
             shellHook = ''
                 export SHELL=/run/current-system/sw/bin/bash
                 echo Added StarPU, Hwloc and gcc to ENV
+                echo ${pkgs.fxt}
             '';
         };
     };

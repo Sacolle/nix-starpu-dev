@@ -20,12 +20,16 @@
   mpi,
   cudaPackages,
 
+  python313,
+  fxt,
+
   # Options
   buildMode ? "debug",
   maxBuffers ? 8,
   enableSimgrid ? false,
   enableMPI ? false,
   enableCUDA ? false,
+  enableTrace ? false,
 }:
 stdenv.mkDerivation (finalAttrs: {
     pname = "StarPU";
@@ -37,6 +41,7 @@ stdenv.mkDerivation (finalAttrs: {
     inherit enableSimgrid;
     inherit enableMPI;
     inherit enableCUDA;
+    inherit enableTrace;
 
     src = fetchurl {
         url = "http://files.inria.fr/starpu/starpu-${finalAttrs.version}/starpu-${finalAttrs.version}.tar.gz";
@@ -48,6 +53,9 @@ stdenv.mkDerivation (finalAttrs: {
         libtool
         writableTmpDirAsHomeHook
         autoreconfHook
+
+        python313
+        fxt
     ] 
         ++ lib.optional finalAttrs.enableSimgrid simgrid
         ++ lib.optional finalAttrs.enableMPI mpi
@@ -59,6 +67,9 @@ stdenv.mkDerivation (finalAttrs: {
         fftw
         fftwFloat
         hwloc
+
+        python313
+        fxt
     ]
         ++ lib.optional finalAttrs.enableSimgrid simgrid
         ++ lib.optional finalAttrs.enableMPI mpi
@@ -71,12 +82,14 @@ stdenv.mkDerivation (finalAttrs: {
         (lib.enableFeature false "build-examples")
         (lib.enableFeature finalAttrs.enableSimgrid "simgrid")
 
-        (lib.enableFeature (finalAttrs.maxBuffers != 8) "maxbuffers=${toString finalAttrs.maxBuffers}")
+        (lib.enableFeature false "starpupy")
 
          # Static linking is mandatory for smpi
         (lib.enableFeature finalAttrs.enableMPI "mpi")
         (lib.enableFeature finalAttrs.enableMPI "mpi-check")
         (lib.enableFeature (!finalAttrs.enableMPI) "shared") 
+
+        # (lib.optional finalAttrs.enableTrace "--prefix=${fxt}")
     ] ++ (
         if finalAttrs.buildMode == "debug" then 
             [ "--enable-debug" "--enable-verbose" "--enable-spinlock-check" ]
@@ -84,10 +97,16 @@ stdenv.mkDerivation (finalAttrs: {
             if finalAttrs.buildMode == "release" then 
                 [ "--enable-fast" ]
             else builtins.throw "unrecognized build mode"
-    );
+    ) ++ (lib.optional (finalAttrs.maxBuffers != 8) "--enable-maxbuffers=${toString finalAttrs.maxBuffers}");
 
 
       # No need to add flags for CUDA, it should be detected by ./configure
+
+      patchPhase = ''
+        # Patch shebangs recursively because a lot of scripts are used
+        shopt -s globstar
+        patchShebangs --build **/*.in
+      '';
 
       postConfigure = ''
         # Patch shebangs recursively because a lot of scripts are used
