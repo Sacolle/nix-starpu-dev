@@ -42,7 +42,6 @@ stdenv.mkDerivation (finalAttrs: {
 
 
       # No need to add flags for CUDA, it should be detected by ./configure
-
       postConfigure = ''
         # Patch shebangs recursively because a lot of scripts are used
         shopt -s globstar

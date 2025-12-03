@@ -53,9 +53,7 @@ stdenv.mkDerivation (finalAttrs: {
         libtool
         writableTmpDirAsHomeHook
         autoreconfHook
-
         python313
-        fxt
     ] 
         ++ lib.optional finalAttrs.enableSimgrid simgrid
         ++ lib.optional finalAttrs.enableMPI mpi
@@ -68,7 +66,6 @@ stdenv.mkDerivation (finalAttrs: {
         fftwFloat
         hwloc
 
-        python313
         fxt
     ]
         ++ lib.optional finalAttrs.enableSimgrid simgrid
@@ -89,7 +86,7 @@ stdenv.mkDerivation (finalAttrs: {
         (lib.enableFeature finalAttrs.enableMPI "mpi-check")
         (lib.enableFeature (!finalAttrs.enableMPI) "shared") 
 
-        # (lib.optional finalAttrs.enableTrace "--prefix=${fxt}")
+        (lib.optional finalAttrs.enableTrace "--with-fxt=${fxt}")
     ] ++ (
         if finalAttrs.buildMode == "debug" then 
             [ "--enable-debug" "--enable-verbose" "--enable-spinlock-check" ]
