@@ -6,6 +6,7 @@ main
 *.log
 *.txt
 *.out
+sf*
 
 prof_file_*
 
