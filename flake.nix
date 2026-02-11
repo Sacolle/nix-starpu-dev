@@ -9,7 +9,7 @@
     let 
         system = "x86_64-linux";
         starpuOverlay = f: p: {
-            StarPU = p.callPackage ./starpu.nix { enableTrace = true; };
+            StarPU = p.callPackage ./starpu.nix { enableCUDA = true; };
         };
         fxtOverlay = f: p: {
             fxt = p.callPackage ./fxt.nix { static = true; };
@@ -17,9 +17,15 @@
         pkgs = import nixpkgs {
             inherit system;
             overlays = [ starpuOverlay fxtOverlay ];
+            config = { 
+                allowUnfree = true;
+                cudaSupport = true;
+                cudaVersion = "13";
+            };
         };
     in
     {
+        packages.${system}.default = pkgs.StarPU;
         devShells.${system}.default = pkgs.mkShell {
             buildInputs = with pkgs; [
                 pkg-config
