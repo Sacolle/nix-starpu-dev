@@ -5,7 +5,7 @@
   # derivation dependencies
   lib,
   fetchurl,
-  stdenv,
+  gcc13Stdenv,
   writableTmpDirAsHomeHook,
   autoreconfHook,
   # starpu dependencies
@@ -22,6 +22,7 @@
 
   python313,
   fxt,
+  linuxPackages,
 
   # Options
   buildMode ? "debug",
@@ -31,7 +32,13 @@
   enableCUDA ? false,
   enableTrace ? false,
 }:
-stdenv.mkDerivation (finalAttrs: {
+let 
+    cudaPkgs = with cudaPackages; [
+        linuxPackages.nvidiaPackages.stable
+        cudatoolkit
+    ];
+in
+gcc13Stdenv.mkDerivation (finalAttrs: {
     pname = "StarPU";
     system = "x86_64-linux";
     version = "1.4.7";
@@ -54,10 +61,12 @@ stdenv.mkDerivation (finalAttrs: {
         writableTmpDirAsHomeHook
         autoreconfHook
         python313
+
     ] 
         ++ lib.optional finalAttrs.enableSimgrid simgrid
         ++ lib.optional finalAttrs.enableMPI mpi
-        ++ lib.optional finalAttrs.enableCUDA cudaPackages.cudatoolkit;
+        ++ lib.optional finalAttrs.enableCUDA cudaPkgs
+        ;
 
     buildInputs = [
         libuuid
@@ -70,7 +79,8 @@ stdenv.mkDerivation (finalAttrs: {
     ]
         ++ lib.optional finalAttrs.enableSimgrid simgrid
         ++ lib.optional finalAttrs.enableMPI mpi
-        ++ lib.optional finalAttrs.enableCUDA cudaPackages.cudatoolkit;
+        ++ lib.optional finalAttrs.enableCUDA cudaPkgs
+        ;
 
     
 
