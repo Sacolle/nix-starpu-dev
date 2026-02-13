@@ -18,10 +18,14 @@
   libtool,
   simgrid,
   mpi,
-  cudaPackages,
 
   python313,
   fxt,
+
+  # These two packages may fail to build with current nixpkgs
+  # If that is the case, the current build works for these two packages comming from
+  # nixpkgs.url = "github:nixos/nixpkgs/1da52dd49a127ad74486b135898da2cef8c62665";
+  cudaPackages,
   linuxPackages,
 
   # Options
